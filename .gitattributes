@@ -1,0 +1,12 @@
+# Text files should use LF
+*.tf text eol=lf
+*.sh text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# Binary files should not be touched
+*.png binary
+*.jpg binary
+*.zip binary
