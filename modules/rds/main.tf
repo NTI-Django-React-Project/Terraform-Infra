@@ -52,9 +52,9 @@ resource "aws_db_instance" "this" {
   copy_tags_to_snapshot  = lookup(each.value, "copy_tags_to_snapshot", true)
 
   # Performance and monitoring
-  performance_insights_enabled          = lookup(each.value, "performance_insights_enabled", false)
-  performance_insights_retention_period = lookup(each.value, "performance_insights_retention_period", 7)
-  performance_insights_kms_key_id       = lookup(each.value, "performance_insights_kms_key_id", null)
+  performance_insights_enabled          = false
+  #performance_insights_retention_period = lookup(each.value, "performance_insights_retention_period", 7)
+  #performance_insights_kms_key_id       = lookup(each.value, "performance_insights_kms_key_id", null)
   enabled_cloudwatch_logs_exports       = lookup(each.value, "enabled_cloudwatch_logs_exports", [])
   monitoring_interval                   = lookup(each.value, "monitoring_interval", 0)
   monitoring_role_arn                   = lookup(each.value, "monitoring_role_arn", null)

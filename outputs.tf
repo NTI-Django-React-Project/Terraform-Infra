@@ -1,198 +1,162 @@
-# ===========================
-# VPC Outputs
-# ===========================
-
+# ───────────────────────────────
+# VPC
+# ───────────────────────────────
 output "vpc_id" {
   description = "VPC ID"
   value       = module.vpc.vpc_id
 }
 
 output "vpc_cidr" {
-  description = "VPC CIDR block"
+  description = "VPC CIDR"
   value       = module.vpc.vpc_cidr_block
 }
 
-# ===========================
-# Subnet Outputs
-# ===========================
-
+# ───────────────────────────────
+# Subnets
+# ───────────────────────────────
 output "subnet_ids" {
-  description = "Map of subnet names to IDs"
+  description = "All subnet name → ID pairs"
   value       = module.subnets.subnet_ids
 }
 
-output "public_subnet_id" {
-  description = "Public subnet ID"
-  value       = module.subnets.subnet_ids["public-1b"]
-}
-
-output "private_k8s_subnet_ids" {
-  description = "Private K8s subnet IDs"
-  value = [
-    module.subnets.subnet_ids["private-k8s-1a"],
-    module.subnets.subnet_ids["private-k8s-1b"],
-    module.subnets.subnet_ids["private-k8s-1c"]
-  ]
-}
-
-output "private_db_subnet_ids" {
-  description = "Private database subnet IDs"
-  value = [
-    module.subnets.subnet_ids["private-db-1a"],
-    module.subnets.subnet_ids["private-db-1b"]
-  ]
-}
-
-# ===========================
-# Gateway Outputs
-# ===========================
-
-output "internet_gateway_id" {
+# ───────────────────────────────
+# Gateways
+# ───────────────────────────────
+output "igw_id" {
   description = "Internet Gateway ID"
-  value       = module.internet_gateway.internet_gateway_id
+  value       = module.igw.internet_gateway_id
 }
 
 output "nat_gateway_id" {
   description = "NAT Gateway ID"
-  value       = module.nat_gateway.nat_gateway_ids["nat-public"]
+  value       = module.nat.nat_gateway_ids["nat-1b"]
 }
 
 output "nat_gateway_public_ip" {
-  description = "NAT Gateway public IP"
-  value       = module.nat_gateway.nat_gateway_public_ips["nat-public"]
+  description = "NAT Gateway public (Elastic) IP"
+  value       = module.nat.nat_gateway_public_ips["nat-1b"]
 }
 
-# ===========================
-# Security Group Outputs
-# ===========================
-
+# ───────────────────────────────
+# Security Groups
+# ───────────────────────────────
 output "security_group_ids" {
-  description = "Map of security group names to IDs"
-  value       = module.security_groups.security_group_ids
+  description = "All SG name → ID pairs"
+  value       = module.sg.security_group_ids
 }
 
-output "jenkins_sg_id" {
-  description = "Jenkins security group ID"
-  value       = module.security_groups.security_group_ids["jenkins-sg"]
-}
-
-output "k8s_sg_id" {
-  description = "K8s security group ID"
-  value       = module.security_groups.security_group_ids["k8s-sg"]
-}
-
-output "rds_sg_id" {
-  description = "RDS security group ID"
-  value       = module.security_groups.security_group_ids["rds-sg"]
-}
-
-# ===========================
-# EC2 Outputs
-# ===========================
-
-output "ec2_instance_ids" {
-  description = "Map of EC2 instance names to IDs"
-  value       = module.ec2_instances.instance_ids
-}
-
+# ───────────────────────────────
+# Jenkins
+# ───────────────────────────────
 output "jenkins_public_ip" {
-  description = "Jenkins server public IP"
-  value       = module.ec2_instances.instance_public_ips["jenkins-server"]
+  description = "Jenkins public IP"
+  value       = module.ec2.instance_public_ips["jenkins-server"]
 }
 
-output "jenkins_public_dns" {
-  description = "Jenkins server public DNS"
-  value       = module.ec2_instances.instance_public_dns["jenkins-server"]
+output "jenkins_url" {
+  description = "Jenkins web UI"
+  value       = "http://${module.ec2.instance_public_ips["jenkins-server"]}:8080"
 }
 
-output "k8s_node_private_ips" {
-  description = "K8s node private IPs"
-  value = {
-    "k8s-node-1a" = module.ec2_instances.instance_private_ips["k8s-node-1a"]
-    "k8s-node-1b" = module.ec2_instances.instance_private_ips["k8s-node-1b"]
-    "k8s-node-1c" = module.ec2_instances.instance_private_ips["k8s-node-1c"]
-  }
+output "jenkins_ssh_command" {
+  description = "Ready-to-paste SSH command for Jenkins"
+  value       = "ssh -i ./keys/jenkins-server-private-key.pem ec2-user@${module.ec2.instance_public_ips["jenkins-server"]}"
 }
 
-output "ssh_key_locations" {
-  description = "Locations of SSH private keys for EC2 instances"
-  value = {
-    for name, key in module.ec2_instances.key_pair_names :
-    name => "./keys/${name}-private-key.pem"
-  }
+# ───────────────────────────────
+# EKS
+# ───────────────────────────────
+# Use the known ARNs and roles you already created above
+output "eks_cluster_role_arn" {
+  description = "IAM role ARN for the EKS cluster"
+  value       = module.eks_cluster_role.arn
 }
 
-# ===========================
-# RDS Outputs
-# ===========================
+output "eks_node_role_arn" {
+  description = "IAM role ARN for the EKS node group"
+  value       = module.eks_node_role.arn
+}
 
+# Optional: expose node group subnet IDs
+output "eks_node_subnet_ids" {
+  description = "Subnet IDs used by EKS nodes"
+  value       = module.eks.node_group_subnet_ids[var.eks_cluster_name]["default"]
+}
+
+# ───────────────────────────────
+# RDS
+# ───────────────────────────────
 output "rds_endpoint" {
-  description = "RDS database endpoint"
-  value       = module.rds.db_instance_endpoints["app-database"]
+  description = "RDS endpoint (host:port)"
+  value       = module.rds.db_instance_endpoints["app-db"]
   sensitive   = true
 }
 
 output "rds_address" {
-  description = "RDS database address"
-  value       = module.rds.db_instance_addresses["app-database"]
+  description = "RDS hostname"
+  value       = module.rds.db_instance_addresses["app-db"]
 }
 
 output "rds_port" {
-  description = "RDS database port"
-  value       = module.rds.db_instance_ports["app-database"]
+  description = "RDS port"
+  value       = module.rds.db_instance_ports["app-db"]
 }
 
-output "rds_database_name" {
-  description = "RDS database name"
-  value       = var.db_name
+output "rds_availability_zone" {
+  description = "RDS availability zone"
+  value       = "eu-north-1a"
 }
 
-# ===========================
-# ECR Outputs
-# ===========================
-
+# ───────────────────────────────
+# ECR
+# ───────────────────────────────
 output "ecr_repository_urls" {
-  description = "Map of ECR repository names to URLs"
+  description = "All ECR repository name → URL pairs"
   value       = module.ecr.repository_urls
 }
 
 output "ecr_repository_arns" {
-  description = "Map of ECR repository names to ARNs"
+  description = "All ECR repository name → ARN pairs"
   value       = module.ecr.repository_arns
 }
 
-# ===========================
-# Connection Information
-# ===========================
-
-output "jenkins_url" {
-  description = "Jenkins web interface URL"
-  value       = "http://${module.ec2_instances.instance_public_ips["jenkins-server"]}:8080"
+# ───────────────────────────────
+# Secrets Manager
+# ───────────────────────────────
+output "secret_arns" {
+  description = "All secret name → ARN pairs"
+  value       = module.secrets.secret_arns
 }
 
-output "ssh_commands" {
-  description = "SSH commands to connect to instances"
-  value = {
-    jenkins = "ssh -i ./keys/jenkins-server-private-key.pem ec2-user@${module.ec2_instances.instance_public_ips["jenkins-server"]}"
-  }
+output "db_secret_arn" {
+  description = "ARN of the DB-credentials secret (use with aws secretsmanager get-secret-value)"
+  value       = module.secrets.secret_arns["${var.project_name}/db/credentials"]
 }
 
-output "infrastructure_summary" {
-  description = "Summary of deployed infrastructure"
-  value = {
-    region                 = var.region
-    vpc_id                 = module.vpc.vpc_id
-    vpc_cidr               = var.vpc_cidr
-    availability_zones     = ["eu-north-1a", "eu-north-1b", "eu-north-1c"]
-    total_subnets          = 6
-    public_subnets         = 1
-    private_subnets        = 5
-    nat_gateways           = 1
-    ec2_instances          = 4
-    rds_instances          = 1
-    ecr_repositories       = 3
-    security_groups        = 3
-    jenkins_public_ip      = module.ec2_instances.instance_public_ips["jenkins-server"]
-    nat_gateway_public_ip  = module.nat_gateway.nat_gateway_public_ips["nat-public"]
-  }
+# ───────────────────────────────
+# IAM Users & Groups
+# ───────────────────────────────
+output "iam_group_name" {
+  description = "DevOps Engineers group name"
+  value       = module.iam_group.group_names["DevOps-Engineers"]
+}
+
+output "iam_group_arn" {
+  description = "DevOps Engineers group ARN"
+  value       = module.iam_group.group_arns["DevOps-Engineers"]
+}
+
+output "iam_user_names" {
+  description = "All IAM user names"
+  value       = module.iam_users.user_names
+}
+
+output "iam_user_arns" {
+  description = "All IAM user ARNs"
+  value       = module.iam_users.user_arns
+}
+
+output "admin_policy_arn" {
+  description = "Admin policy ARN attached to DevOps Engineers group"
+  value       = module.iam_policy_admin.policy_arns["AdminAccess"]
 }

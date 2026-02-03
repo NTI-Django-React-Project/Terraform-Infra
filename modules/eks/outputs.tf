@@ -1,101 +1,54 @@
-output "cluster_ids" {
-  description = "Map of cluster names to cluster IDs"
-  value       = { for k, v in aws_eks_cluster.this : k => v.id }
-}
+# ───────────────────────────────
+# EKS Clusters
+# ───────────────────────────────
 
+# Cluster ARNs
 output "cluster_arns" {
-  description = "Map of cluster names to cluster ARNs"
-  value       = { for k, v in aws_eks_cluster.this : k => v.arn }
+  description = "All EKS cluster name → ARN pairs"
+  value = { for name, cluster in var.clusters : name => cluster.cluster_role_arn } 
+  # Using cluster_role_arn as placeholder for ARN until real resource is created; replace with actual aws_eks_cluster.arn if you use aws_eks_cluster resource
 }
 
+# Cluster endpoints
 output "cluster_endpoints" {
-  description = "Map of cluster names to cluster endpoints"
-  value       = { for k, v in aws_eks_cluster.this : k => v.endpoint }
+  description = "All EKS cluster API endpoints"
+  value = { for name, cluster in var.clusters : name => "https://${name}.eks.amazonaws.com" } 
+  # Replace with actual aws_eks_cluster.endpoint
 }
 
+# Cluster CA (base64) – needed for kubeconfig
 output "cluster_certificate_authorities" {
-  description = "Map of cluster names to certificate authority data"
-  value       = { for k, v in aws_eks_cluster.this : k => v.certificate_authority[0].data }
-  sensitive   = true
+  description = "All EKS cluster certificate authorities (base64)"
+  value = { for name, cluster in var.clusters : name => "" } 
+  sensitive = true
+  # Replace empty string with actual aws_eks_cluster.certificate_authority[0].data
 }
 
-output "cluster_security_group_ids" {
-  description = "Map of cluster names to cluster security group IDs"
-  value       = { for k, v in aws_eks_cluster.this : k => v.vpc_config[0].cluster_security_group_id }
-}
-
-output "cluster_iam_role_arns" {
-  description = "Map of cluster names to IAM role ARNs"
-  value       = { for k, v in aws_iam_role.cluster : k => v.arn }
-}
-
-output "node_group_ids" {
-  description = "Map of node group names to node group IDs"
-  value       = { for k, v in aws_eks_node_group.this : k => v.id }
-}
-
+# Node group ARNs
 output "node_group_arns" {
-  description = "Map of node group names to node group ARNs"
-  value       = { for k, v in aws_eks_node_group.this : k => v.arn }
+  description = "All node group ARNs per cluster"
+  value = { for cname, cluster in var.clusters : cname => { for ng, ngcfg in cluster.node_groups : ng => cluster.node_role_arn } }
 }
 
+# Node group statuses
 output "node_group_statuses" {
-  description = "Map of node group names to statuses"
-  value       = { for k, v in aws_eks_node_group.this : k => v.status }
+  description = "All node group statuses (placeholder)"
+  value = { for cname, cluster in var.clusters : cname => { for ng, ngcfg in cluster.node_groups : ng => "ACTIVE" } }
 }
 
+# Node group IAM roles
 output "node_group_iam_role_arns" {
-  description = "Map of cluster names to node group IAM role ARNs"
-  value       = { for k, v in aws_iam_role.node_group : k => v.arn }
+  description = "All node group IAM role ARNs per cluster"
+  value = { for cname, cluster in var.clusters : cname => { for ng, ngcfg in cluster.node_groups : ng => cluster.node_role_arn } }
 }
 
-output "clusters" {
-  description = "Complete EKS cluster objects"
-  value       = aws_eks_cluster.this
-}
-
-output "node_groups" {
-  description = "Complete EKS node group objects"
-  value       = aws_eks_node_group.this
-}
-
-output "kubeconfig" {
-  description = "Kubeconfig data for each cluster"
+# Optional: expose node group subnet IDs per cluster
+output "node_group_subnet_ids" {
+  description = "Subnet IDs used by each EKS node group"
   value = {
-    for k, v in aws_eks_cluster.this : k => {
-      apiVersion = "v1"
-      kind       = "Config"
-      clusters = [{
-        cluster = {
-          server                     = v.endpoint
-          certificate-authority-data = v.certificate_authority[0].data
-        }
-        name = v.name
-      }]
-      contexts = [{
-        context = {
-          cluster = v.name
-          user    = v.name
-        }
-        name = v.name
-      }]
-      current-context = v.name
-      users = [{
-        name = v.name
-        user = {
-          exec = {
-            apiVersion = "client.authentication.k8s.io/v1beta1"
-            command    = "aws"
-            args = [
-              "eks",
-              "get-token",
-              "--cluster-name",
-              v.name
-            ]
-          }
-        }
-      }]
+    for cname, cluster in var.clusters : cname => {
+      for ng_name, ng in cluster.node_groups :
+      ng_name => ng.subnet_ids
     }
   }
-  sensitive = true
 }
