@@ -1,4 +1,5 @@
-# ─── locals ─────────────────────────────────────────────────────────────────
+
+# ────────────────────────────── Locals ──────────────────────────────
 locals {
   tags = {
     Project     = var.project_name
@@ -7,123 +8,114 @@ locals {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# VPC
+# IAM – DevOps Engineers
 # ═══════════════════════════════════════════════════════════════════════════════
-module "vpc" {
-  source = "./modules/vpc"
+module "iam_policy_admin" {
+  source = "./modules/iam-policy"
 
-  region               = var.region
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
+  policies = {
+    "AdminAccess" = {
+      description = "Administrator access for DevOps Engineers"
+      path = "/devops/"
+      policy_document = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect   = "Allow"
+          Action   = "*"
+          Resource = "*"
+        }]
+      })
+      tags = { Team = "devops" }
+    }
+  }
+
+  tags = local.tags
+}
+
+module "iam_group" {
+  source = "./modules/iam-group"
+
+  groups = {
+    "DevOps-Engineers" = {
+      path = "/devops/"
+      tags = { Team = "devops" }
+    }
+  }
+}
+
+module "iam_group_policy_attachment" {
+  source = "./modules/iam-group-policy-attachment"
+
+  attachments = {
+    "devops-admin-attach" = {
+      group = module.iam_group.group_names["DevOps-Engineers"]
+      policy_arn = module.iam_policy_admin.policy_arns["AdminAccess"]
+    }
+  }
+}
+
+module "iam_users" {
+  source = "./modules/iam-user"
+
+  users = {
+    "Alpha-DevOps-Eng" = {
+      path          = "/devops/"
+      force_destroy = true
+      tags          = { Team = "devops", Engineer = "alpha" }
+    }
+    "Sigma-DevOps-Eng" = {
+      path          = "/devops/"
+      force_destroy = true
+      tags          = { Team = "devops", Engineer = "sigma" }
+    }
+  }
+
+  tags = local.tags
+}
+
+module "iam_user_group_membership" {
+  source = "./modules/iam-user-group-membership"
+
+  memberships = {
+    "alpha-devops-membership" = {
+      user   = module.iam_users.user_names["Alpha-DevOps-Eng"]
+      groups = [module.iam_group.group_names["DevOps-Engineers"]]
+    }
+    "sigma-devops-membership" = {
+      user   = module.iam_users.user_names["Sigma-DevOps-Eng"]
+      groups = [module.iam_group.group_names["DevOps-Engineers"]]
+    }
+  }
+}
+
+
+# ────────────────────────────── EKS Network Module ──────────────────────────────
+module "eks_network" {
+  source = "./modules/eks-network"
+
+  region             = var.region
+  vpc_cidr           = var.vpc_cidr
+  enable_dns_support = true
   enable_dns_hostnames = true
 
-  tags = merge(local.tags, { Name = "${var.project_name}-vpc" })
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Subnets
-# ═══════════════════════════════════════════════════════════════════════════════
-# Layout:
-#   eu-north-1a  – 10.10.2.0/24 private  → RDS primary
-#                – 10.10.3.0/24 private  → EKS
-#   eu-north-1b  – 10.10.1.0/24 public   → Jenkins
-#                – 10.10.4.0/24 private  → EKS
-#                – 10.10.6.0/24 private  → RDS subnet group (required but unused)
-#   eu-north-1c  – 10.10.5.0/24 private  → EKS
-#
-# Note: AWS requires DB subnet groups to span ≥2 AZs even for single-AZ instances
-
-module "subnets" {
-  source = "./modules/subnet"
-
-  vpc_id = module.vpc.vpc_id
-
   subnets = {
-    public-1b      = { cidr_block = var.jenkins_subnet, availability_zone = "eu-north-1b", tags = { Type = "public",  Tier = "web"      } }
-    private-db-1a  = { cidr_block = var.rds_subnets[0], availability_zone = "eu-north-1a", tags = { Type = "private", Tier = "database" } }
-    private-db-1c  = { cidr_block = var.rds_subnets[1], availability_zone = "eu-north-1c", tags = { Type = "private", Tier = "database-secondary" } }
-    private-eks-1a = { cidr_block = var.eks_subnets[0], availability_zone = "eu-north-1a", tags = { Type = "private", Tier = "eks"      } }
-    private-eks-1b = { cidr_block = var.eks_subnets[1], availability_zone = "eu-north-1b", tags = { Type = "private", Tier = "eks"      } }
-    private-eks-1c = { cidr_block = var.eks_subnets[2], availability_zone = "eu-north-1c", tags = { Type = "private", Tier = "eks"      } }
+    public-1b      = { cidr_block = var.jenkins_subnet, availability_zone = "eu-north-1b", type = "public",  tier = "web" }
+    private-db-1a  = { cidr_block = var.rds_subnets[0],  availability_zone = "eu-north-1a", type = "isolated", tier = "database" }
+    private-db-1c  = { cidr_block = var.rds_subnets[1],  availability_zone = "eu-north-1c", type = "isolated", tier = "database-secondary" }
+    private-eks-1a = { cidr_block = var.eks_subnets[0],  availability_zone = "eu-north-1a", type = "private", tier = "eks" }
+    private-eks-1b = { cidr_block = var.eks_subnets[1],  availability_zone = "eu-north-1b", type = "private", tier = "eks" }
+    private-eks-1c = { cidr_block = var.eks_subnets[2],  availability_zone = "eu-north-1c", type = "private", tier = "eks" }
   }
-}
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Internet Gateway
-# ═══════════════════════════════════════════════════════════════════════════════
-module "igw" {
-  source = "./modules/internet-gateway"
-
-  region = var.region
-  vpc_id = module.vpc.vpc_id
-
-  tags = merge(local.tags, { Name = "${var.project_name}-igw" })
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# NAT Gateway
-# ═══════════════════════════════════════════════════════════════════════════════
-#Terraform (AWS provider v5.x) only supports connectivity_type = "public" or "private" for aws_nat_gateway.
-#"regional" is not a valid value for the AWS NAT Gateway API. There is no regional option you can pass directly. 
-#The “regional” NAT gateway concept exists only in routing terms, not as a separate API parameter. 
-#You still pick a subnet to place the NAT in, and AWS handles the rest.
-#Terraform/AWS rejects it because the provider only accepts "public" or "private".
-
-module "nat" { 
-  source = "./modules/nat-gateway"
-
-  region = var.region 
-  vpc_id = module.vpc.vpc_id
-  
-  nat_gateways = { nat-1b = { 
-      subnet_id = module.subnets.subnet_ids["public-1b"] 
-      tags = { AZ = "eu-north-1b" } 
-      }
+  nat_gateways = {
+    nat-1b = {
+      subnet_key = "public-1b"
+      tags       = { AZ = "eu-north-1b" }
     }
   }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Route Tables
-# ═══════════════════════════════════════════════════════════════════════════════
-module "route_tables" {
-  source = "./modules/route-table"
-
-  region = var.region
-  vpc_id = module.vpc.vpc_id
-
-  route_tables = {
-    public = {
-      routes = [{ cidr_block = "0.0.0.0/0", gateway_id = module.igw.internet_gateway_id }]
-      tags   = { Type = "public" }
-    }
-    private = {
-      routes = [{ cidr_block = "0.0.0.0/0", nat_gateway_id = module.nat.nat_gateway_ids["nat-1b"] }]
-      tags   = { Type = "private" }
-    }
-    database = {
-      routes = []
-      tags   = { Type = "private-isolated" }
-    }
-  }
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Route Table Associations
-# ═══════════════════════════════════════════════════════════════════════════════
-module "rt_assoc" {
-  source = "./modules/route-table-association"
-
-  region = var.region
-
-  subnet_associations = {
-    public-1b      = { subnet_id = module.subnets.subnet_ids["public-1b"],      route_table_id = module.route_tables.route_table_ids["public"]   }
-    private-eks-1a = { subnet_id = module.subnets.subnet_ids["private-eks-1a"], route_table_id = module.route_tables.route_table_ids["private"]  }
-    private-eks-1b = { subnet_id = module.subnets.subnet_ids["private-eks-1b"], route_table_id = module.route_tables.route_table_ids["private"]  }
-    private-eks-1c = { subnet_id = module.subnets.subnet_ids["private-eks-1c"], route_table_id = module.route_tables.route_table_ids["private"]  }
-    private-db-1a  = { subnet_id = module.subnets.subnet_ids["private-db-1a"],  route_table_id = module.route_tables.route_table_ids["database"] }
-    private-db-1c  = { subnet_id = module.subnets.subnet_ids["private-db-1c"],  route_table_id = module.route_tables.route_table_ids["database"] }
-  }
+  tags = local.tags
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -132,7 +124,7 @@ module "rt_assoc" {
 module "sg" {
   source = "./modules/security-group"
 
-  vpc_id = module.vpc.vpc_id
+  vpc_id = module.eks_network.vpc_id
   tags   = local.tags
 
   security_groups = {
@@ -218,8 +210,8 @@ module "ec2" {
   instances = {
     jenkins-server = {
       ami                         = var.ami_id
-      instance_type               = "t3.micro"
-      subnet_id                   = module.subnets.subnet_ids["public-1b"]
+      instance_type               = "t3.medium"
+      subnet_id                   = module.eks_network.subnet_ids["public-1b"]
       security_group_ids          = [module.sg.security_group_ids["jenkins-sg"]]
       associate_public_ip_address = true
       user_data                   = local.jenkins_user_data
@@ -229,8 +221,88 @@ module "ec2" {
   }
 }
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# EKS (ArgoCD for CD will be deployed as pods in cluster later)
+# RDS (Single-AZ for free tier, but subnet group spans 2 AZs per AWS requirement)
+# ═══════════════════════════════════════════════════════════════════════════════
+module "rds" {
+  source = "./modules/rds"
+
+  region = var.region
+  tags   = local.tags
+
+  db_instances = {
+    app-db = {
+      engine            = "postgres"
+      engine_version    = "14.15"
+      instance_class    = "db.t3.micro"
+      allocated_storage = 20
+      username          = var.db_username
+      password          = var.db_password
+      db_name           = var.db_name
+      port              = 5432
+
+      subnet_ids             = [module.eks_network.subnet_ids["private-db-1a"], module.eks_network.subnet_ids["private-db-1c"]]
+      vpc_security_group_ids = [module.sg.security_group_ids["rds-sg"]]
+
+      multi_az                 = false
+      availability_zone        = "eu-north-1a"
+      storage_type             = "gp3"
+      storage_encrypted        = true
+      backup_retention_period  = 0
+      skip_final_snapshot      = true
+      deletion_protection      = false
+      delete_automated_backups = true
+
+      tags = { Tier = "database" }
+    }
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ECR (frontend and backend registrey)
+# ═══════════════════════════════════════════════════════════════════════════════
+module "ecr" {
+  source = "./modules/ecr"
+
+  region = var.region
+  tags   = local.tags
+
+  repositories = {
+    "${var.project_name}-frontend" = { image_tag_mutability = "MUTABLE", scan_on_push = true, force_delete = true, tags = { Component = "frontend" } }
+    "${var.project_name}-backend"  = { image_tag_mutability = "MUTABLE", scan_on_push = true, force_delete = true, tags = { Component = "backend"  } }
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Secrets Manager (for RDS and K8s secrets)
+# ═══════════════════════════════════════════════════════════════════════════════
+#module "secrets" {
+#  source = "./modules/secret-manager"
+#
+#  tags = local.tags
+#
+#  secrets = {
+#    "${var.project_name}/db/credentials" = {
+#      description             = "RDS master credentials for ${var.db_name}"
+#      recovery_window_in_days = 7
+#      secret_string = jsonencode({
+#        username = var.db_username
+#        password = var.db_password
+#        dbname   = var.db_name
+#        host     = module.rds.db_instance_addresses["app-db"]
+#        port     = 5432
+#        engine   = "postgres"
+#      })
+#      tags = { Tier = "database", Usage = "rds-credentials" }
+#    }
+#  }
+#}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EKS Setup
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ───────────────────────────────
@@ -245,8 +317,9 @@ module "eks_cluster_role" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
-      Action = "sts:AssumeRole"
-      Principal = { Service = "eks.amazonaws.com" }
+      Action = "sts:AssumeRole" # ← KEY: This allows "assuming" the role
+      Principal = { Service = "eks.amazonaws.com" }  # ← WHO: EKS service
+      # Think of it as: "EKS service has permission to BECOME this role"
     }]
   })
 
@@ -301,9 +374,9 @@ module "eks" {
   clusters = {
     "${var.eks_cluster_name}" = {
       subnet_ids          = [
-                            module.subnets.subnet_ids["private-eks-1a"],
-                            module.subnets.subnet_ids["private-eks-1b"],
-                            module.subnets.subnet_ids["private-eks-1c"]
+                            module.eks_network.subnet_ids["private-eks-1a"],
+                            module.eks_network.subnet_ids["private-eks-1b"],
+                            module.eks_network.subnet_ids["private-eks-1c"]
                             ]
       kubernetes_version  = var.eks_kubernetes_version
       tags                = local.tags
@@ -312,12 +385,15 @@ module "eks" {
       cluster_role_arn    = module.eks_cluster_role.arn
       node_role_arn       = module.eks_node_role.arn
 
+      # CRITICAL: Enable IRSA on the cluster
+      enable_irsa         = true
+
       node_groups = {
         "default" = {
           subnet_ids     =  [
-                            module.subnets.subnet_ids["private-eks-1a"],
-                            module.subnets.subnet_ids["private-eks-1b"],
-                            module.subnets.subnet_ids["private-eks-1c"]
+                            module.eks_network.subnet_ids["private-eks-1a"],
+                            module.eks_network.subnet_ids["private-eks-1b"],
+                            module.eks_network.subnet_ids["private-eks-1c"]
                             ]
           desired_size   = var.eks_node_count
           min_size       = var.eks_node_count
@@ -334,159 +410,172 @@ module "eks" {
 
 
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# RDS (Single-AZ for free tier, but subnet group spans 2 AZs per AWS requirement)
+# IRSA Setup - MUST be after EKS cluster creation
 # ═══════════════════════════════════════════════════════════════════════════════
-module "rds" {
-  source = "./modules/rds"
 
-  region = var.region
-  tags   = local.tags
+# Wait for cluster to be fully created
+resource "time_sleep" "wait_for_eks" {
+  depends_on = [module.eks] # Wait for creation to START
+  
+  create_duration = "180s" # For OIDC to be available, Give it time to be READY
+}
 
-  db_instances = {
-    app-db = {
-      engine            = "postgres"
-      engine_version    = "14.15"
-      instance_class    = "db.t3.micro"
-      allocated_storage = 20
-      username          = var.db_username
-      password          = var.db_password
-      db_name           = var.db_name
-      port              = 5432
+# Fetch cluster info AFTER it's created
+# data are dynamic values that only exist AFTER creation
+data "aws_eks_cluster" "this" {
+  depends_on = [time_sleep.wait_for_eks]
+  
+  name = module.eks.cluster_name
+}
 
-      subnet_ids             = [module.subnets.subnet_ids["private-db-1a"], module.subnets.subnet_ids["private-db-1c"]]
-      vpc_security_group_ids = [module.sg.security_group_ids["rds-sg"]]
+# This gives you a SHORT-LIVED TOKEN (1 hour) to authenticate with K8s API, 
+# dynamically generated by AWS
+data "aws_eks_cluster_auth" "this" {
+  depends_on = [time_sleep.wait_for_eks]
+  
+  name = module.eks.cluster_name
+}
 
-      multi_az                 = false
-      availability_zone        = "eu-north-1a"
-      storage_type             = "gp3"
-      storage_encrypted        = true
-      backup_retention_period  = 0
-      skip_final_snapshot      = true
-      deletion_protection      = false
-      delete_automated_backups = true
 
-      tags = { Tier = "database" }
+# Kubernetes provider - configure AFTER cluster exists
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
+  
+  # Use your region variable
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name",
+      data.aws_eks_cluster.this.name,
+      "--region",
+      var.region 
+    ]
+  }
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Kubernetes Namespaces
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "eks_namespaces" {
+  depends_on = [time_sleep.wait_for_eks]
+  source = "./modules/eks-namespace"
+  
+  namespaces = {
+    # Platform namespaces
+    argocd = {
+      name = "argocd"
+      labels = {
+        category = "platform"
+        tool     = "argocd"
+      }
+      annotations = {
+        "owner" = "platform-team"
+      }
     }
-  }
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ECR (frontend and backend only)
-# ═══════════════════════════════════════════════════════════════════════════════
-module "ecr" {
-  source = "./modules/ecr"
-
-  region = var.region
-  tags   = local.tags
-
-  repositories = {
-    "${var.project_name}-frontend" = { image_tag_mutability = "MUTABLE", scan_on_push = true, force_delete = true, tags = { Component = "frontend" } }
-    "${var.project_name}-backend"  = { image_tag_mutability = "MUTABLE", scan_on_push = true, force_delete = true, tags = { Component = "backend"  } }
-  }
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Secrets Manager (for RDS and K8s secrets)
-# ═══════════════════════════════════════════════════════════════════════════════
-module "secrets" {
-  source = "./modules/secret-manager"
-
-  tags = local.tags
-
-  secrets = {
-    "${var.project_name}/db/credentials" = {
-      description             = "RDS master credentials for ${var.db_name}"
-      recovery_window_in_days = 7
-      secret_string = jsonencode({
-        username = var.db_username
-        password = var.db_password
-        dbname   = var.db_name
-        host     = module.rds.db_instance_addresses["app-db"]
-        port     = 5432
-        engine   = "postgres"
-      })
-      tags = { Tier = "database", Usage = "rds-credentials" }
+    
+    observability = {
+      name = "observability"
+      labels = {
+        category = "platform"
+        tool     = "monitoring"
+      }
+      annotations = {
+        "owner" = "sre-team"
+      }
     }
+    
+    # Application namespaces
+    backend = {
+      name = "backend"
+      labels = {
+        category = "application"
+        team     = "backend-team"
+      }
+      annotations = {
+        "owner" = "backend-team"
+      }
+    }
+    
+    frontend = {
+      name = "frontend"
+      labels = {
+        category = "application"
+        team     = "frontend-team"
+      }
+      annotations = {
+        "owner" = "frontend-team"
+      }
+    }
+    
+  }
+  
+  default_labels = {
+    managed-by   = "terraform"
+    environment  = var.environment
+    cluster      = var.eks_cluster_name
   }
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# IAM – DevOps Engineers
-# ═══════════════════════════════════════════════════════════════════════════════
-module "iam_policy_admin" {
-  source = "./modules/iam-policy"
 
-  policies = {
-    "AdminAccess" = {
-      description = "Administrator access for DevOps Engineers"
-      policy_document = jsonencode({
+module "eks_irsa" {
+  depends_on = [time_sleep.wait_for_eks, module.eks_namespaces]
+  source       = "./modules/eks-irsa"
+  cluster_name = module.eks.cluster_name
+  
+  # CRITICAL FIX: Pass the OIDC ISSUER URL, not ARN
+  cluster_oidc_issuer = data.aws_eks_cluster.this.identity[0].oidc[0].issuer
+  
+  # Optional: Pass region if needed for tags
+  region = var.region
+  
+  service_accounts = {
+    backend = {
+      role_name       = "${var.project_name}-${var.environment}-backend-irsa-role"
+      policy_name     = "${var.project_name}-${var.environment}-backend-secrets-policy"
+      policy_document = {
         Version = "2012-10-17"
         Statement = [{
           Effect   = "Allow"
-          Action   = "*"
+          Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
           Resource = "*"
         }]
-      })
-      tags = { Team = "devops" }
+      }
+      namespace   = "backend"
+      k8s_sa_name = "backend-sa"
+    }
+
+    alb_controller = {
+      role_name       = "${var.project_name}-${var.environment}-alb-controller-irsa-role"
+      policy_name     = "${var.project_name}-${var.environment}-alb-controller-policy"
+      policy_document = {
+        Version = "2012-10-17"
+        Statement = [{
+          Effect   = "Allow"
+          Action   = [
+            "ec2:Describe*", "elasticloadbalancing:*", "iam:CreateServiceLinkedRole",
+            "iam:GetServerCertificate", "iam:ListServerCertificates",
+            "cognito-idp:DescribeUserPoolClient",
+            "waf-regional:GetWebACL", "waf-regional:GetWebACLForResource",
+            "waf-regional:AssociateWebACL", "waf-regional:DisassociateWebACL",
+            "wafv2:GetWebACL", "wafv2:GetWebACLForResource", "wafv2:AssociateWebACL", "wafv2:DisassociateWebACL",
+            "shield:Get*", "shield:Describe*", "shield:CreateProtection", "shield:DeleteProtection"
+          ]
+          Resource = "*"
+        }]
+      }
+      namespace   = "kube-system"
+      k8s_sa_name = "aws-load-balancer-controller"
     }
   }
-
+  
   tags = local.tags
-}
-
-module "iam_group" {
-  source = "./modules/iam-group"
-
-  groups = {
-    "DevOps-Engineers" = {
-      path = "/devops/"
-      tags = { Team = "devops" }
-    }
-  }
-}
-
-module "iam_group_policy_attachment" {
-  source = "./modules/iam-group-policy-attachment"
-
-  attachments = {
-    "devops-admin-attach" = {
-      group = module.iam_group.group_names["DevOps-Engineers"]
-      policy_arn = module.iam_policy_admin.policy_arns["AdminAccess"]
-    }
-  }
-}
-
-module "iam_users" {
-  source = "./modules/iam-user"
-
-  users = {
-    "Alpha-DevOps-Eng" = {
-      path          = "/devops/"
-      force_destroy = true
-      tags          = { Team = "devops", Engineer = "alpha" }
-    }
-    "Sigma-DevOps-Eng" = {
-      path          = "/devops/"
-      force_destroy = true
-      tags          = { Team = "devops", Engineer = "sigma" }
-    }
-  }
-
-  tags = local.tags
-}
-
-module "iam_user_group_membership" {
-  source = "./modules/iam-user-group-membership"
-
-  memberships = {
-    "alpha-devops-membership" = {
-      user   = module.iam_users.user_names["Alpha-DevOps-Eng"]
-      groups = [module.iam_group.group_names["DevOps-Engineers"]]
-    }
-    "sigma-devops-membership" = {
-      user   = module.iam_users.user_names["Sigma-DevOps-Eng"]
-      groups = [module.iam_group.group_names["DevOps-Engineers"]]
-    }
-  }
 }

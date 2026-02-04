@@ -17,8 +17,3 @@ output "policies" {
   description = "Complete IAM policy objects"
   value       = aws_iam_policy.this
 }
-
-output "full_privilege_policy_document" {
-  description = "Full privilege policy document for reference"
-  value       = local.full_privilege_policy
-}

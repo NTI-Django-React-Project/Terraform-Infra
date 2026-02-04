@@ -37,20 +37,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-# Helper variable for creating full privilege policy
-variable "create_full_privilege_policy" {
-  description = "Whether to create a full privilege policy"
-  type        = bool
-  default     = false
-}
-
-variable "full_privilege_policy_name" {
-  description = "Name for the full privilege policy if created"
-  type        = string
-  default     = "FullPrivilegePolicy"
-  validation {
-    condition     = length(var.full_privilege_policy_name) >= 1 && length(var.full_privilege_policy_name) <= 128
-    error_message = "Policy name must be between 1 and 128 characters."
-  }
-}

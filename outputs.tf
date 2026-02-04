@@ -1,40 +1,24 @@
 # ───────────────────────────────
-# VPC
+# EKS Network
 # ───────────────────────────────
 output "vpc_id" {
-  description = "VPC ID"
-  value       = module.vpc.vpc_id
+  value = module.eks_network.vpc_id
 }
 
-output "vpc_cidr" {
-  description = "VPC CIDR"
-  value       = module.vpc.vpc_cidr_block
-}
-
-# ───────────────────────────────
-# Subnets
-# ───────────────────────────────
 output "subnet_ids" {
-  description = "All subnet name → ID pairs"
-  value       = module.subnets.subnet_ids
+  value = module.eks_network.subnet_ids
 }
 
-# ───────────────────────────────
-# Gateways
-# ───────────────────────────────
-output "igw_id" {
-  description = "Internet Gateway ID"
-  value       = module.igw.internet_gateway_id
+output "internet_gateway_id" {
+  value = module.eks_network.internet_gateway_id
 }
 
-output "nat_gateway_id" {
-  description = "NAT Gateway ID"
-  value       = module.nat.nat_gateway_ids["nat-1b"]
+output "nat_gateway_ids" {
+  value = module.eks_network.nat_gateway_ids
 }
 
-output "nat_gateway_public_ip" {
-  description = "NAT Gateway public (Elastic) IP"
-  value       = module.nat.nat_gateway_public_ips["nat-1b"]
+output "route_table_ids" {
+  value = module.eks_network.route_table_ids
 }
 
 # ───────────────────────────────
@@ -83,6 +67,8 @@ output "eks_node_subnet_ids" {
   value       = module.eks.node_group_subnet_ids[var.eks_cluster_name]["default"]
 }
 
+
+
 # ───────────────────────────────
 # RDS
 # ───────────────────────────────
@@ -123,15 +109,15 @@ output "ecr_repository_arns" {
 # ───────────────────────────────
 # Secrets Manager
 # ───────────────────────────────
-output "secret_arns" {
-  description = "All secret name → ARN pairs"
-  value       = module.secrets.secret_arns
-}
-
-output "db_secret_arn" {
-  description = "ARN of the DB-credentials secret (use with aws secretsmanager get-secret-value)"
-  value       = module.secrets.secret_arns["${var.project_name}/db/credentials"]
-}
+#output "secret_arns" {
+#  description = "All secret name → ARN pairs"
+#  value       = module.secrets.secret_arns
+#}
+#
+#output "db_secret_arn" {
+#  description = "ARN of the DB-credentials secret (use with aws secretsmanager get-secret-value)"
+#  value       = module.secrets.secret_arns["${var.project_name}/db/credentials"]
+#}
 
 # ───────────────────────────────
 # IAM Users & Groups

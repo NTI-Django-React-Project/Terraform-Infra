@@ -95,7 +95,7 @@ variable "eks_cluster_name" {
 variable "eks_kubernetes_version" {
   description = "Default Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.31"
 
   validation {
     condition     = contains(["1.27", "1.28", "1.29", "1.30", "1.31"], var.eks_kubernetes_version)
@@ -106,7 +106,7 @@ variable "eks_kubernetes_version" {
 variable "eks_node_instance_type" {
   description = "Default instance type for EKS worker nodes"
   type        = string
-  default     = "t3.micro"
+  default     = "t3.medium"
 }
 
 variable "eks_node_disk_size" {

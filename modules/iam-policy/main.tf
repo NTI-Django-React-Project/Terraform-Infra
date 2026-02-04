@@ -16,16 +16,3 @@ resource "aws_iam_policy" "this" {
   )
 }
 
-# Predefined full privilege policy
-locals {
-  full_privilege_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = "*"
-        Resource = "*"
-      }
-    ]
-  })
-}
