@@ -26,14 +26,12 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
       - name: Update kubeconfig for EKS
         run: |
           aws eks update-kubeconfig \
             --region ${{ secrets.AWS_REGION }} \
-            --name eks-cluster
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve
-
+            --name $(terraform output -raw eks_cluster_name)
       - name: Show Terraform Outputs
         run: terraform output
