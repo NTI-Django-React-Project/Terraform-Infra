@@ -191,6 +191,7 @@ locals {
     #!/bin/bash
     set -e
 
+    # 1. تحديث النظام وتثبيت الأساسيات
     yum update -y
     amazon-linux-extras install docker -y || yum install docker -y
     systemctl start docker && systemctl enable docker
@@ -198,16 +199,17 @@ locals {
 
     yum install java-11-openjdk git curl -y
 
+    # 2. تثبيت Jenkins
     wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
     rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
     yum install jenkins -y
     systemctl start jenkins && systemctl enable jenkins
 
-    sleep 60   
+    sleep 60  # انتظر Jenkins يبدأ
 
+    # 3. تثبيت n8n
     mkdir -p /var/lib/n8n
     chown -R 1000:1000 /var/lib/n8n
-
     docker run -d \
       --name n8n \
       --restart unless-stopped \
@@ -215,26 +217,92 @@ locals {
       -v /var/lib/n8n:/home/node/.n8n \
       n8nio/n8n:latest
 
-    sleep 30   
+    sleep 30  # انتظر n8n يبدأ
 
-    # 4. استيراد الـ workflow تلقائيًا (أهم جزء)
-    # غيّر الرابط ده برابط الـ JSON الخام اللي هتحطه في GitHub أو S3
-    WORKFLOW_URL="https://raw.githubusercontent.com/your-username/your-repo/main/n8n/jenkins-notify-workflow.json"
+    # 4. تثبيت plugins أساسية (JCasC + Job DSL + Generic Webhook)
+    mkdir -p /var/lib/jenkins/plugins
+    cd /var/lib/jenkins/plugins
+    wget -q https://updates.jenkins.io/download/plugins/configuration-as-code/latest/configuration-as-code.hpi
+    wget -q https://updates.jenkins.io/download/plugins/job-dsl/latest/job-dsl.hpi
+    wget -q https://updates.jenkins.io/download/plugins/generic-webhook-trigger/latest/generic-webhook-trigger.hpi
 
-    curl -o /tmp/jenkins-workflow.json "$WORKFLOW_URL" || true
+    # 5. JCasC config مع job أوتوماتيكي
+    cat <<'EOF' > /var/lib/jenkins/jenkins.yaml
+    jenkins:
+      systemMessage: "Auto-configured by JCasC - Jenkins + n8n ready"
+      numExecutors: 2
 
-    # ملاحظة: استيراد الـ workflow عبر API يحتاج token أو basic auth
-    # الحل الأسهل حاليًا: import يدوي مرة واحدة ثم عمل AMI
-    # أو نضيف لاحقًا n8n API call مع auth
+    jobs:
+      - script: |
+          job('security-scan') {
+            description('Run security tools on AWS')
+            steps {
+              shell('''
+                # Checkout repo (إذا مش موجود)
+                git clone https://github.com/your-org/your-repo.git .
+                cd your-repo-folder  # غيّر بالمجلد اللي فيه الكود
 
-    # 5. فتح الـ ports
-    firewall-cmd --permanent --add-port=8080/tcp   # Jenkins
-    firewall-cmd --permanent --add-port=5678/tcp   # n8n
+                # 1. Trivy (Vulnerability Scan)
+                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.50.1
+                trivy fs . --exit-code 1 --severity HIGH,CRITICAL --format json --output trivy-report.json || true
+
+                # 2. OWASP Dependency-Check
+                curl -L https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.0/dependency-check-9.0.0-release.zip -o dependency-check.zip
+                unzip dependency-check.zip -d /opt
+                /opt/dependency-check-9.0.0/bin/dependency-check.sh --scan . --format JSON --out /var/lib/jenkins/dependency-check-report.json || true
+
+                # 3. SonarQube Scan
+                # أولاً، نزّل scanner لو مش موجود
+                curl -L https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o sonar-scanner.zip
+                unzip sonar-scanner.zip -d /opt
+                export PATH=$PATH:/opt/sonar-scanner-5.0.1.3006-linux/bin
+                sonar-scanner \
+                  -Dsonar.projectKey=your-project-key \
+                  -Dsonar.sources=. \
+                  -Dsonar.host.url=https://your-sonarqube-url \
+                  -Dsonar.token=your-sonar-token || true
+
+              ''')
+            }
+            publishers {
+              genericWebhookTrigger {
+                url('https://abdo073.app.n8n.cloud/webhook/jenkins-notify')
+                postContentType('application/json')
+                requestBody('''
+                  {
+                    "status": "$BUILD_STATUS",
+                    "jobName": "$JOB_NAME",
+                    "buildNumber": "$BUILD_NUMBER",
+                    "buildUrl": "$BUILD_URL",
+                    "trivyCritical": "$(jq .Results[0].Vulnerabilities[] | select(.Severity == \"CRITICAL\") | length // 0 trivy-report.json)",
+                    "owaspHigh": "$(jq .dependencies[] | select(.vulnerability.severity == \"HIGH\") | length // 0 dependency-check-report.json)",
+                    "sonarIssues": "$(curl -s https://your-sonarqube-url/api/issues/search?componentKeys=your-project-key | jq '.issues | length')"
+                  }
+                ''')
+              }
+            }
+          }
+    EOF
+
+    # 6. Disable setup wizard
+    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/disable-setup.groovy
+    import jenkins.model.*
+    Jenkins.instance.setupWizard = null
+    EOF
+
+    # 7. Restart Jenkins عشان يطبّق JCasC
+    systemctl restart jenkins
+
+    sleep 90
+
+    # 8. فتح الـ ports
+    firewall-cmd --permanent --add-port=8080/tcp
+    firewall-cmd --permanent --add-port=5678/tcp
     firewall-cmd --reload || true
 
-    echo "Jenkins & n8n ready" > /var/log/setup-complete.log
+    echo "Jenkins + n8n + auto-job ready" > /var/log/setup-complete.log
     echo "Jenkins: http://$(curl -s ifconfig.me):8080" >> /var/log/setup-complete.log
-    echo "n8n:    http://$(curl -s ifconfig.me):5678" >> /var/log/setup-complete.log
+    echo "n8n: http://$(curl -s ifconfig.me):5678" >> /var/log/setup-complete.log
   EOT
 }
 
