@@ -187,7 +187,58 @@ module "sg-rules" {
 # EC2 – Jenkins (CI server outside cluster)
 # ═══════════════════════════════════════════════════════════════════════════════
 locals {
-  jenkins_user_data = <<-SCRIPT
+  jenkins_user_data = <<-EOT
+    #!/bin/bash
+    set -e
+
+    yum update -y
+    amazon-linux-extras install docker -y || yum install docker -y
+    systemctl start docker && systemctl enable docker
+    usermod -aG docker ec2-user
+
+    yum install java-11-openjdk git curl -y
+
+    wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+    rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+    yum install jenkins -y
+    systemctl start jenkins && systemctl enable jenkins
+
+    sleep 60   
+
+    mkdir -p /var/lib/n8n
+    chown -R 1000:1000 /var/lib/n8n
+
+    docker run -d \
+      --name n8n \
+      --restart unless-stopped \
+      -p 5678:5678 \
+      -v /var/lib/n8n:/home/node/.n8n \
+      n8nio/n8n:latest
+
+    sleep 30   
+
+    # 4. استيراد الـ workflow تلقائيًا (أهم جزء)
+    # غيّر الرابط ده برابط الـ JSON الخام اللي هتحطه في GitHub أو S3
+    WORKFLOW_URL="https://raw.githubusercontent.com/your-username/your-repo/main/n8n/jenkins-notify-workflow.json"
+
+    curl -o /tmp/jenkins-workflow.json "$WORKFLOW_URL" || true
+
+    # ملاحظة: استيراد الـ workflow عبر API يحتاج token أو basic auth
+    # الحل الأسهل حاليًا: import يدوي مرة واحدة ثم عمل AMI
+    # أو نضيف لاحقًا n8n API call مع auth
+
+    # 5. فتح الـ ports
+    firewall-cmd --permanent --add-port=8080/tcp   # Jenkins
+    firewall-cmd --permanent --add-port=5678/tcp   # n8n
+    firewall-cmd --reload || true
+
+    echo "Jenkins & n8n ready" > /var/log/setup-complete.log
+    echo "Jenkins: http://$(curl -s ifconfig.me):8080" >> /var/log/setup-complete.log
+    echo "n8n:    http://$(curl -s ifconfig.me):5678" >> /var/log/setup-complete.log
+  EOT
+}
+
+<<-SCRIPT
     #!/bin/bash
     yum update -y
     amazon-linux-extras install docker -y
