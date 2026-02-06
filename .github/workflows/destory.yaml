@@ -20,7 +20,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - run: terraform init -input=false
+      - run: terraform init -input=false \
+              -var="db_username=${{ secrets.TF_VAR_DB_USERNAME }}" \
+              -var="db_password=${{ secrets.TF_VAR_DB_PASSWORD }}"
 
       - name: Terraform Destroy
         run: terraform destroy -auto-approve
