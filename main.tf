@@ -183,6 +183,19 @@ module "sg-rules" {
   }
 }
 
+# قراءة Secrets من AWS (مش إنشاء!)
+data "aws_secretsmanager_secret_version" "sonar_token" {
+  secret_id = "jenkins/credentials/sonar-token"
+}
+
+data "aws_secretsmanager_secret_version" "github_pat" {
+  secret_id = "jenkins/credentials/github-pat"
+}
+
+data "aws_secretsmanager_secret_version" "owasp_key" {
+  secret_id = "jenkins/credentials/owasp-key"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # EC2 – Jenkins (CI server outside cluster)
 # ═══════════════════════════════════════════════════════════════════════════════
