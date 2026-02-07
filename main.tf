@@ -191,118 +191,147 @@ locals {
     #!/bin/bash
     set -e
 
-    # 1. تحديث النظام وتثبيت الأساسيات
+    # ────────────────────────────────────────────────
+    # 1. تحديث النظام + تثبيت الأدوات الأساسية
+    # ────────────────────────────────────────────────
     yum update -y
-    amazon-linux-extras install docker -y || yum install docker -y
+    yum install -y docker java-17-amazon-corretto git curl wget jq unzip awscli
+
     systemctl start docker && systemctl enable docker
     usermod -aG docker ec2-user
 
-    yum install java-11-openjdk git curl -y
-
+    # ────────────────────────────────────────────────
     # 2. تثبيت Jenkins
+    # ────────────────────────────────────────────────
     wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
     rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
-    yum install jenkins -y
-    systemctl start jenkins && systemctl enable jenkins
+    yum install -y jenkins
 
-    sleep 60  # انتظر Jenkins يبدأ
+    systemctl enable jenkins
+    systemctl start jenkins
 
-    # 3. تثبيت n8n
-    mkdir -p /var/lib/n8n
-    chown -R 1000:1000 /var/lib/n8n
-    docker run -d \
-      --name n8n \
-      --restart unless-stopped \
-      -p 5678:5678 \
-      -v /var/lib/n8n:/home/node/.n8n \
-      n8nio/n8n:latest
+    sleep 90  # انتظر لحد ما Jenkins يبدأ
 
-    sleep 30  # انتظر n8n يبدأ
+    # ────────────────────────────────────────────────
+    # 3. جلب كلمة السر الأولية + إنشاء admin أوتوماتيك
+    # ────────────────────────────────────────────────
+    JENKINS_PASSWORD=$(cat /var/lib/jenkins/secrets/initialAdminPassword)
 
-    # 4. تثبيت plugins أساسية (JCasC + Job DSL + Generic Webhook)
+    mkdir -p /var/lib/jenkins/init.groovy.d
+    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/auto-setup.groovy
+    import jenkins.model.*
+    import hudson.security.*
+
+    def instance = Jenkins.getInstance()
+    instance.setupWizard = null
+
+    def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+    hudsonRealm.createAccount("admin", "${JENKINS_PASSWORD}")
+    instance.setSecurityRealm(hudsonRealm)
+
+    def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+    strategy.setAllowAnonymousRead(false)
+    instance.setAuthorizationStrategy(strategy)
+
+    instance.save()
+    EOF
+
+    # ────────────────────────────────────────────────
+    # 4. تثبيت plugins مهمة
+    # ────────────────────────────────────────────────
     mkdir -p /var/lib/jenkins/plugins
     cd /var/lib/jenkins/plugins
+
     wget -q https://updates.jenkins.io/download/plugins/configuration-as-code/latest/configuration-as-code.hpi
     wget -q https://updates.jenkins.io/download/plugins/job-dsl/latest/job-dsl.hpi
     wget -q https://updates.jenkins.io/download/plugins/generic-webhook-trigger/latest/generic-webhook-trigger.hpi
+    wget -q https://updates.jenkins.io/download/plugins/aws-secrets-manager-credentials-provider/latest/aws-secrets-manager-credentials-provider.hpi
 
-    # 5. JCasC config مع job أوتوماتيكي
+    # ────────────────────────────────────────────────
+    # 5. JCasC config أساسي (بدون secrets حساسة)
+    # ────────────────────────────────────────────────
     cat <<'EOF' > /var/lib/jenkins/jenkins.yaml
     jenkins:
-      systemMessage: "Auto-configured by JCasC - Jenkins + n8n ready"
+      systemMessage: "Fully GitOps – Jenkins + Security Pipeline + n8n"
       numExecutors: 2
-
-    jobs:
-      - script: |
-          job('security-scan') {
-            description('Run security tools on AWS')
-            steps {
-              shell('''
-                # Checkout repo (إذا مش موجود)
-                git clone https://github.com/your-org/your-repo.git .
-                cd your-repo-folder  # غيّر بالمجلد اللي فيه الكود
-
-                # 1. Trivy (Vulnerability Scan)
-                curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.50.1
-                trivy fs . --exit-code 1 --severity HIGH,CRITICAL --format json --output trivy-report.json || true
-
-                # 2. OWASP Dependency-Check
-                curl -L https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.0/dependency-check-9.0.0-release.zip -o dependency-check.zip
-                unzip dependency-check.zip -d /opt
-                /opt/dependency-check-9.0.0/bin/dependency-check.sh --scan . --format JSON --out /var/lib/jenkins/dependency-check-report.json || true
-
-                # 3. SonarQube Scan
-                # أولاً، نزّل scanner لو مش موجود
-                curl -L https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o sonar-scanner.zip
-                unzip sonar-scanner.zip -d /opt
-                export PATH=$PATH:/opt/sonar-scanner-5.0.1.3006-linux/bin
-                sonar-scanner \
-                  -Dsonar.projectKey=your-project-key \
-                  -Dsonar.sources=. \
-                  -Dsonar.host.url=https://your-sonarqube-url \
-                  -Dsonar.token=your-sonar-token || true
-
-              ''')
-            }
-            publishers {
-              genericWebhookTrigger {
-                url('https://abdo073.app.n8n.cloud/webhook/jenkins-notify')
-                postContentType('application/json')
-                requestBody('''
-                  {
-                    "status": "$BUILD_STATUS",
-                    "jobName": "$JOB_NAME",
-                    "buildNumber": "$BUILD_NUMBER",
-                    "buildUrl": "$BUILD_URL",
-                    "trivyCritical": "$(jq .Results[0].Vulnerabilities[] | select(.Severity == \"CRITICAL\") | length // 0 trivy-report.json)",
-                    "owaspHigh": "$(jq .dependencies[] | select(.vulnerability.severity == \"HIGH\") | length // 0 dependency-check-report.json)",
-                    "sonarIssues": "$(curl -s https://your-sonarqube-url/api/issues/search?componentKeys=your-project-key | jq '.issues | length')"
-                  }
-                ''')
-              }
-            }
-          }
+    security:
+      remotingCLI:
+        enabled: false
     EOF
 
-    # 6. Disable setup wizard
-    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/disable-setup.groovy
-    import jenkins.model.*
-    Jenkins.instance.setupWizard = null
-    EOF
-
-    # 7. Restart Jenkins عشان يطبّق JCasC
+    # Restart عشان يطبّق JCasC
     systemctl restart jenkins
-
     sleep 90
 
-    # 8. فتح الـ ports
+    # ────────────────────────────────────────────────
+    # 6. إنشاء Job أساسي بـ Job DSL (آمن ويستخدم credentials من Secrets Manager)
+    # ────────────────────────────────────────────────
+    cat <<'EOF' > /tmp/security-scan.groovy
+    job('security-scan') {
+      description('Run security tools on push to main')
+      parameters {
+        stringParam('REPO_URL', 'https://github.com/your-org/your-repo.git', 'Repo to scan')
+      }
+      triggers {
+        githubPush()
+      }
+      scm {
+        git {
+          remote { url('https://github.com/your-org/your-repo.git') }
+          branches('main')
+        }
+      }
+      steps {
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+          shell('''
+            # Checkout code
+            git clone $REPO_URL .
+            # Trivy
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            trivy fs . --exit-code 1 --severity HIGH,CRITICAL --format json --output trivy-report.json || true
+            # OWASP Dependency-Check
+            curl -L https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.0/dependency-check-9.0.0-release.zip -o dc.zip
+            unzip dc.zip -d /opt
+            /opt/dependency-check-9.0.0/bin/dependency-check.sh --scan . --format JSON --out dependency-check-report.json || true
+            # SonarQube Scan
+            export PATH=$PATH:/opt/sonar-scanner-5.0.1.3006-linux/bin
+            sonar-scanner \
+              -Dsonar.projectKey=your-project \
+              -Dsonar.sources=. \
+              -Dsonar.host.url=https://your-sonarqube \
+              -Dsonar.token=$SONAR_TOKEN || true
+          ''')
+        }
+      }
+      publishers {
+        genericWebhookTrigger {
+          url('https://abdo073.app.n8n.cloud/webhook/jenkins-notify')
+          postContentType('application/json')
+          requestBody('''
+            {
+              "status": "$BUILD_STATUS",
+              "jobName": "$JOB_NAME",
+              "buildNumber": "$BUILD_NUMBER",
+              "buildUrl": "$BUILD_URL",
+              "trivyCritical": "$(jq '.Results[].Vulnerabilities | length // 0' trivy-report.json)",
+              "owaspHigh": "$(jq '.dependencies[] | select(.vulnerabilities[]?.severity == "HIGH") | length // 0' dependency-check-report.json)",
+              "sonarIssues": "$(curl -s -u $SONAR_TOKEN: https://your-sonarqube/api/issues/search?componentKeys=your-project | jq '.issues | length')"
+            }
+          ''')
+        }
+      }
+    }
+    EOF
+
+    # تنفيذ Job DSL
+    java -jar /var/cache/jenkins/war/WEB-INF/jenkins-cli.jar -s http://localhost:8080/ -auth admin:$JENKINS_PASSWORD groovy /tmp/security-scan.groovy
+
+    # 7. فتح الـ ports
     firewall-cmd --permanent --add-port=8080/tcp
-    firewall-cmd --permanent --add-port=5678/tcp
     firewall-cmd --reload || true
 
-    echo "Jenkins + n8n + auto-job ready" > /var/log/setup-complete.log
-    echo "Jenkins: http://$(curl -s ifconfig.me):8080" >> /var/log/setup-complete.log
-    echo "n8n: http://$(curl -s ifconfig.me):5678" >> /var/log/setup-complete.log
+    echo "Jenkins fully configured at http://$(curl -s ifconfig.me):8080" > /var/log/setup-complete.log
+    echo "Admin password: $JENKINS_PASSWORD" >> /var/log/setup-complete.log
   EOT
 }
 
