@@ -212,6 +212,51 @@ locals {
 
     sleep 90  # انتظر لحد ما Jenkins يبدأ
 
+    # Groovy script يجيب الـ secrets من Secrets Manager ويضيفها في Jenkins credentials
+    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/add-credentials.groovy
+    import com.cloudbees.plugins.credentials.*
+    import com.cloudbees.plugins.credentials.impl.*
+    import com.cloudbees.plugins.credentials.common.*
+    import hudson.util.Secret
+
+    def instance = Jenkins.getInstance()
+
+    // جلب Sonar Token من Secrets Manager
+    def sonarToken = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/sonar-token --query SecretString --output text --region us-east-1".execute().text.trim()
+
+    def sonarCred = new StringCredentialsImpl(
+        CredentialsScope.GLOBAL,
+        "sonar-token",
+        "SonarQube Token",
+        Secret.fromString(sonarToken)
+    )
+    SystemCredentialsProvider.getInstance().getCredentials().add(sonarCred)
+
+    // جلب GitHub PAT من Secrets Manager
+    def githubPat = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/github-pat --query SecretString --output text --region us-east-1".execute().text.trim()
+
+    def githubCred = new StringCredentialsImpl(
+        CredentialsScope.GLOBAL,
+        "github-pat",
+        "GitHub PAT",
+        Secret.fromString(githubPat)
+    )
+    SystemCredentialsProvider.getInstance().getCredentials().add(githubCred)
+
+    // أضف أي credential تاني بنفس الطريقة (مثل OWASP key)
+    def owaspKey = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/owasp-key --query SecretString --output text --region us-east-1".execute().text.trim()
+
+    def owaspCred = new StringCredentialsImpl(
+        CredentialsScope.GLOBAL,
+        "owasp-key",
+        "OWASP Key",
+        Secret.fromString(owaspKey)
+    )
+    SystemCredentialsProvider.getInstance().getCredentials().add(owaspCred)
+
+    SystemCredentialsProvider.getInstance().save()
+    EOF
+
     # ────────────────────────────────────────────────
     # 3. جلب كلمة السر الأولية + إنشاء admin أوتوماتيك
     # ────────────────────────────────────────────────
