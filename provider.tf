@@ -15,6 +15,14 @@ terraform {
       version = "~> 2.0"
     }
   }
+
+  backend "s3" {
+    bucket         = "gig-route-terraform-bucket"
+    key            = "tfstate-dir/terraform.tfstate" # path inside bucket
+    region         = "eu-north-1"
+    dynamodb_table = "gig-route-terraform-state-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

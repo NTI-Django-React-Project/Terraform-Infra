@@ -15,7 +15,10 @@ resource "aws_subnet" "this" {
   cidr_block        = each.value.cidr_block
   availability_zone = each.value.availability_zone
 
-  tags = merge(var.tags, {
+  tags = merge(
+    var.tags, 
+    each.value.tags,
+    {
     Name = each.key
     Type = each.value.type
     Tier = each.value.tier

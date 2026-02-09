@@ -44,6 +44,22 @@ output "public_keys" {
   value       = { for k, v in tls_private_key.this : k => v.public_key_openssh }
 }
 
+# Instance profile names
+output "instance_profile_names" {
+  description = "IAM instance profile names created by this module"
+  value = {
+    for k, v in aws_iam_instance_profile.this : k => v.name
+  }
+}
+
+# Instance profile ARNs
+output "instance_profile_arns" {
+  description = "IAM instance profile ARNs created by this module"
+  value = {
+    for k, v in aws_iam_instance_profile.this : k => v.arn
+  }
+}
+
 output "instances" {
   description = "Complete EC2 instance objects"
   value       = aws_instance.this

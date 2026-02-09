@@ -13,7 +13,6 @@ resource "aws_eks_cluster" "this" {
     endpoint_private_access = lookup(each.value, "endpoint_private_access", true)
     endpoint_public_access  = lookup(each.value, "endpoint_public_access", true)
     public_access_cidrs     = lookup(each.value, "public_access_cidrs", ["0.0.0.0/0"])
-    security_group_ids      = lookup(each.value, "security_group_ids", [])
   }
 
   enabled_cluster_log_types = lookup(each.value, "enabled_cluster_log_types", ["api", "audit", "authenticator", "controllerManager", "scheduler"])

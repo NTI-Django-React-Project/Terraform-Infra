@@ -16,7 +16,6 @@ variable "db_instances" {
     instance_class    = string
     allocated_storage = number
     username          = string
-    password          = string
     subnet_ids        = list(string)
 
     # Optional parameters
@@ -24,7 +23,6 @@ variable "db_instances" {
     port                                  = optional(number)
     storage_type                          = optional(string, "gp3")
     storage_encrypted                     = optional(bool, true)
-    kms_key_id                            = optional(string)
     iops                                  = optional(number)
     storage_throughput                    = optional(number)
     max_allocated_storage                 = optional(number)

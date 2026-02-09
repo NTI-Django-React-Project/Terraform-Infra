@@ -24,6 +24,7 @@ variable "subnets" {
     availability_zone = string
     type              = string  # "public" or "private" or "isolated"
     tier              = string
+    tags              = optional(map(string), {})
   }))
   description = "Subnets definition"
 }

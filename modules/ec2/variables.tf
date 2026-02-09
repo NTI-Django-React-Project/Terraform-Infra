@@ -14,6 +14,7 @@ variable "instances" {
     root_encrypted              = optional(bool, true)
     iam_instance_profile        = optional(string)
     enable_detailed_monitoring  = optional(bool, false)
+    iam_role_name               = optional(string)
     tags                        = optional(map(string), {})
   }))
 
@@ -23,7 +24,7 @@ variable "instances" {
         "t3.micro", "t3.small", "t3.medium", "t3.large", "t3.xlarge", "t3.2xlarge",
         "t2.micro", "t2.small", "t2.medium", "t2.large", "t2.xlarge", "t2.2xlarge",
         "m5.large", "m5.xlarge", "m5.2xlarge", "m5.4xlarge", "m5.8xlarge",
-        "c5.large", "c5.xlarge", "c5.2xlarge", "c5.4xlarge", "c5.9xlarge"
+        "c5.large", "c5.xlarge", "c5.2xlarge", "c5.4xlarge", "c5.9xlarge", "m7i-flex.large"
       ], v.instance_type)
     ])
     error_message = "Instance type must be a valid EC2 instance type."
@@ -64,4 +65,10 @@ variable "tags" {
   description = "Common tags to apply to all EC2 instances"
   type        = map(string)
   default     = {}
+}
+
+variable "create_instance_profiles" {
+  description = "Whether to create IAM instance profiles for instances that specify iam_role_name"
+  type        = bool
+  default     = true  # Default to creating them
 }

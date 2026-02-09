@@ -28,15 +28,14 @@ resource "aws_db_instance" "this" {
   max_allocated_storage = lookup(each.value, "max_allocated_storage", null)
   storage_type          = lookup(each.value, "storage_type", "gp3")
   storage_encrypted     = lookup(each.value, "storage_encrypted", true)
-  kms_key_id            = lookup(each.value, "kms_key_id", null)
   iops                  = lookup(each.value, "iops", null)
   storage_throughput    = lookup(each.value, "storage_throughput", null)
 
   # Database settings
   db_name  = lookup(each.value, "db_name", null)
   username = each.value.username
-  password = each.value.password
   port     = lookup(each.value, "port", null)
+  manage_master_user_password   = true
 
   # Network settings
   db_subnet_group_name   = aws_db_subnet_group.this[each.key].name

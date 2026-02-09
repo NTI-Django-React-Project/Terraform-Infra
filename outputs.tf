@@ -64,7 +64,7 @@ output "eks_node_role_arn" {
 # Optional: expose node group subnet IDs
 output "eks_node_subnet_ids" {
   description = "Subnet IDs used by EKS nodes"
-  value       = module.eks.node_group_subnet_ids[var.eks_cluster_name]["default"]
+  value       = module.eks.node_group_subnet_ids[var.eks_cluster_name][var.eks_node_group_name]
 }
 
 
@@ -74,18 +74,18 @@ output "eks_node_subnet_ids" {
 # ───────────────────────────────
 output "rds_endpoint" {
   description = "RDS endpoint (host:port)"
-  value       = module.rds.db_instance_endpoints["app-db"]
+  value       = module.rds.db_instance_endpoints["${var.db_instance}"]
   sensitive   = true
 }
 
 output "rds_address" {
   description = "RDS hostname"
-  value       = module.rds.db_instance_addresses["app-db"]
+  value       = module.rds.db_instance_addresses["${var.db_instance}"]
 }
 
 output "rds_port" {
   description = "RDS port"
-  value       = module.rds.db_instance_ports["app-db"]
+  value       = module.rds.db_instance_ports["${var.db_instance}"]
 }
 
 output "rds_availability_zone" {

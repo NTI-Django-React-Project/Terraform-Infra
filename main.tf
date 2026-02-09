@@ -99,14 +99,94 @@ module "eks_network" {
   enable_dns_hostnames = true
 
   subnets = {
-    public-1b      = { cidr_block = var.jenkins_subnet, availability_zone = "eu-north-1b", type = "public",  tier = "web" }
-    private-db-1a  = { cidr_block = var.rds_subnets[0],  availability_zone = "eu-north-1a", type = "isolated", tier = "database" }
-    private-db-1c  = { cidr_block = var.rds_subnets[1],  availability_zone = "eu-north-1c", type = "isolated", tier = "database-secondary" }
-    private-eks-1a = { cidr_block = var.eks_subnets[0],  availability_zone = "eu-north-1a", type = "private", tier = "eks" }
-    private-eks-1b = { cidr_block = var.eks_subnets[1],  availability_zone = "eu-north-1b", type = "private", tier = "eks" }
-    private-eks-1c = { cidr_block = var.eks_subnets[2],  availability_zone = "eu-north-1c", type = "private", tier = "eks" }
+    # The Next 3 subnets are for Jenkins Server "in public-1b" & ALB "as it requires a public subnet in each AZ your nodes are in"
+    public-1a      = {
+      cidr_block = var.public_subnets[0], 
+      availability_zone = "eu-north-1a", 
+      type = "public",  
+      tier = "alb", 
+      tags = { # Extra tags Required for alb
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/elb" = "1"   # ← For ELBs
+      } 
+    }
+
+    public-1b      = { 
+      cidr_block = var.public_subnets[1], 
+      availability_zone = "eu-north-1b", 
+      type = "public",  
+      tier = "alb-and-jenkins", 
+      tags = { # Extra tags Required for alb
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/elb" = "1"  # ← For ELBs
+      } 
+    }
+
+    public-1c      = { 
+      cidr_block = var.public_subnets[2], 
+      availability_zone = "eu-north-1c", 
+      type = "public",  
+      tier = "alb", 
+      tags = { # Extra tags Required for alb
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/elb" = "1"  # ← For ELBs
+      } 
+    }
+
+    # The next 2 private subnets are for RDS, one where it's physically created and other is for RDS requirements Because :
+    # the DB subnet group is meant to provide high-availability placement options if you later enable Multi-AZ, 
+    # or for internal networking requirements
+    private-db-1a  = { 
+      cidr_block = var.rds_subnets[0],  
+      availability_zone = "eu-north-1a", 
+      type = "isolated", 
+      tier = "database" 
+    }
+
+    private-db-1c  = { 
+      cidr_block = var.rds_subnets[1],  
+      availability_zone = "eu-north-1c", 
+      type = "isolated", 
+      tier = "database-secondary" 
+    }
+
+    # The next 3 private subnets are for the cluster
+    private-eks-1a = { 
+      cidr_block = var.eks_subnets[0],  
+      availability_zone = "eu-north-1a", 
+      type = "private", 
+      tier = "eks", 
+      tags = {
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/internal-elb" = "1"  # ← For internal ELBs
+      }
+    }
+
+    private-eks-1b = { 
+      cidr_block = var.eks_subnets[1],  
+      availability_zone = "eu-north-1b", 
+      type = "private", 
+      tier = "eks", 
+      tags = {
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/internal-elb" = "1"  # ← For internal ELBs
+      }
+    }
+
+    private-eks-1c = { 
+      cidr_block = var.eks_subnets[2],  
+      availability_zone = "eu-north-1c", 
+      type = "private", 
+      tier = "eks", 
+      tags = {
+        "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
+        "kubernetes.io/role/internal-elb" = "1"  # ← For internal ELBs
+      }
+    }
+
   }
 
+  # Creating one NAT Gateway for public subnets, placed in in "public-1b" public subnet so all public subnets can connect to it 
   nat_gateways = {
     nat-1b = {
       subnet_key = "public-1b"
@@ -128,20 +208,9 @@ module "sg" {
   tags   = local.tags
 
   security_groups = {
-    eks-nodes-sg = {
-      description = "EKS worker nodes - SSH inbound; all outbound"
-      ingress_rules = [
-        { from_port = 22, to_port = 22, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"], description = "SSH" }
-      ]
-      egress_rules = [
-        { from_port = 0, to_port = 0, protocol = "-1", cidr_blocks = ["0.0.0.0/0"], description = "All outbound" }
-      ]
-      tags = { Service = "eks" }
-    }
-
     rds-sg = {
       description = "RDS - PostgreSQL from EKS Security Group only"
-      ingress_rules = []
+      ingress_rules = [] # We'll add the rule via sg-rules module to only accept traffic from the later created node group sg by EKS node group
       egress_rules = []
       tags         = { Service = "rds" }
     }
@@ -162,236 +231,59 @@ module "sg" {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Security Group Rule – edit RDS ingress rule
-# ═══════════════════════════════════════════════════════════════════════════════
-
-module "sg-rules" {
-  source = "./modules/security-group-rule"
-
-  rules = {
-    rds_from_eks = {
-      type                     = "ingress"
-      security_group_id        = module.sg.security_group_ids["rds-sg"]
-      source_security_group_id = module.sg.security_group_ids["eks-nodes-sg"]
-
-      from_port = 5432
-      to_port   = 5432
-      protocol  = "tcp"
-
-      description = "PostgreSQL from EKS nodes only"
-    }
-  }
-}
-
-# قراءة Secrets من AWS (مش إنشاء!)
-data "aws_secretsmanager_secret_version" "sonar_token" {
-  secret_id = "jenkins/credentials/sonar-token"
-}
-
-data "aws_secretsmanager_secret_version" "github_pat" {
-  secret_id = "jenkins/credentials/github-pat"
-}
-
-data "aws_secretsmanager_secret_version" "owasp_key" {
-  secret_id = "jenkins/credentials/owasp-key"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # EC2 – Jenkins (CI server outside cluster)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 locals {
-  jenkins_user_data = <<-EOT
+  # a script to install Jenkins on it's EC2 instance
+  jenkins_user_data = <<-SCRIPT
     #!/bin/bash
-    set -e
-
-    # ────────────────────────────────────────────────
-    # 1. تحديث النظام + تثبيت الأدوات الأساسية
-    # ────────────────────────────────────────────────
     yum update -y
-    yum install -y docker java-17-amazon-corretto git curl wget jq unzip awscli
-
+    amazon-linux-extras install docker -y
     systemctl start docker && systemctl enable docker
     usermod -aG docker ec2-user
 
-    # ────────────────────────────────────────────────
-    # 2. تثبيت Jenkins
-    # ────────────────────────────────────────────────
     wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
     rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
-    yum install -y jenkins
-
-    systemctl enable jenkins
-    systemctl start jenkins
-
-    sleep 90  # انتظر لحد ما Jenkins يبدأ
-
-    # Groovy script يجيب الـ secrets من Secrets Manager ويضيفها في Jenkins credentials
-    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/add-credentials.groovy
-    import com.cloudbees.plugins.credentials.*
-    import com.cloudbees.plugins.credentials.impl.*
-    import com.cloudbees.plugins.credentials.common.*
-    import hudson.util.Secret
-
-    def instance = Jenkins.getInstance()
-
-    // جلب Sonar Token من Secrets Manager
-    def sonarToken = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/sonar-token --query SecretString --output text --region us-east-1".execute().text.trim()
-
-    def sonarCred = new StringCredentialsImpl(
-        CredentialsScope.GLOBAL,
-        "sonar-token",
-        "SonarQube Token",
-        Secret.fromString(sonarToken)
-    )
-    SystemCredentialsProvider.getInstance().getCredentials().add(sonarCred)
-
-    // جلب GitHub PAT من Secrets Manager
-    def githubPat = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/github-pat --query SecretString --output text --region us-east-1".execute().text.trim()
-
-    def githubCred = new StringCredentialsImpl(
-        CredentialsScope.GLOBAL,
-        "github-pat",
-        "GitHub PAT",
-        Secret.fromString(githubPat)
-    )
-    SystemCredentialsProvider.getInstance().getCredentials().add(githubCred)
-
-    // أضف أي credential تاني بنفس الطريقة (مثل OWASP key)
-    def owaspKey = "aws secretsmanager get-secret-value --secret-id jenkins/credentials/owasp-key --query SecretString --output text --region us-east-1".execute().text.trim()
-
-    def owaspCred = new StringCredentialsImpl(
-        CredentialsScope.GLOBAL,
-        "owasp-key",
-        "OWASP Key",
-        Secret.fromString(owaspKey)
-    )
-    SystemCredentialsProvider.getInstance().getCredentials().add(owaspCred)
-
-    SystemCredentialsProvider.getInstance().save()
-    EOF
-
-    # ────────────────────────────────────────────────
-    # 3. جلب كلمة السر الأولية + إنشاء admin أوتوماتيك
-    # ────────────────────────────────────────────────
-    JENKINS_PASSWORD=$(cat /var/lib/jenkins/secrets/initialAdminPassword)
-
-    mkdir -p /var/lib/jenkins/init.groovy.d
-    cat <<'EOF' > /var/lib/jenkins/init.groovy.d/auto-setup.groovy
-    import jenkins.model.*
-    import hudson.security.*
-
-    def instance = Jenkins.getInstance()
-    instance.setupWizard = null
-
-    def hudsonRealm = new HudsonPrivateSecurityRealm(false)
-    hudsonRealm.createAccount("admin", "${JENKINS_PASSWORD}")
-    instance.setSecurityRealm(hudsonRealm)
-
-    def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
-    strategy.setAllowAnonymousRead(false)
-    instance.setAuthorizationStrategy(strategy)
-
-    instance.save()
-    EOF
-
-    # ────────────────────────────────────────────────
-    # 4. تثبيت plugins مهمة
-    # ────────────────────────────────────────────────
-    mkdir -p /var/lib/jenkins/plugins
-    cd /var/lib/jenkins/plugins
-
-    wget -q https://updates.jenkins.io/download/plugins/configuration-as-code/latest/configuration-as-code.hpi
-    wget -q https://updates.jenkins.io/download/plugins/job-dsl/latest/job-dsl.hpi
-    wget -q https://updates.jenkins.io/download/plugins/generic-webhook-trigger/latest/generic-webhook-trigger.hpi
-    wget -q https://updates.jenkins.io/download/plugins/aws-secrets-manager-credentials-provider/latest/aws-secrets-manager-credentials-provider.hpi
-
-    # ────────────────────────────────────────────────
-    # 5. JCasC config أساسي (بدون secrets حساسة)
-    # ────────────────────────────────────────────────
-    cat <<'EOF' > /var/lib/jenkins/jenkins.yaml
-    jenkins:
-      systemMessage: "Fully GitOps – Jenkins + Security Pipeline + n8n"
-      numExecutors: 2
-    security:
-      remotingCLI:
-        enabled: false
-    EOF
-
-    # Restart عشان يطبّق JCasC
-    systemctl restart jenkins
-    sleep 90
-
-    # ────────────────────────────────────────────────
-    # 6. إنشاء Job أساسي بـ Job DSL (آمن ويستخدم credentials من Secrets Manager)
-    # ────────────────────────────────────────────────
-    cat <<'EOF' > /tmp/security-scan.groovy
-    job('security-scan') {
-      description('Run security tools on push to main')
-      parameters {
-        stringParam('REPO_URL', 'https://github.com/your-org/your-repo.git', 'Repo to scan')
-      }
-      triggers {
-        githubPush()
-      }
-      scm {
-        git {
-          remote { url('https://github.com/your-org/your-repo.git') }
-          branches('main')
-        }
-      }
-      steps {
-        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-          shell('''
-            # Checkout code
-            git clone $REPO_URL .
-            # Trivy
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-            trivy fs . --exit-code 1 --severity HIGH,CRITICAL --format json --output trivy-report.json || true
-            # OWASP Dependency-Check
-            curl -L https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.0/dependency-check-9.0.0-release.zip -o dc.zip
-            unzip dc.zip -d /opt
-            /opt/dependency-check-9.0.0/bin/dependency-check.sh --scan . --format JSON --out dependency-check-report.json || true
-            # SonarQube Scan
-            export PATH=$PATH:/opt/sonar-scanner-5.0.1.3006-linux/bin
-            sonar-scanner \
-              -Dsonar.projectKey=your-project \
-              -Dsonar.sources=. \
-              -Dsonar.host.url=https://your-sonarqube \
-              -Dsonar.token=$SONAR_TOKEN || true
-          ''')
-        }
-      }
-      publishers {
-        genericWebhookTrigger {
-          url('https://abdo073.app.n8n.cloud/webhook/jenkins-notify')
-          postContentType('application/json')
-          requestBody('''
-            {
-              "status": "$BUILD_STATUS",
-              "jobName": "$JOB_NAME",
-              "buildNumber": "$BUILD_NUMBER",
-              "buildUrl": "$BUILD_URL",
-              "trivyCritical": "$(jq '.Results[].Vulnerabilities | length // 0' trivy-report.json)",
-              "owaspHigh": "$(jq '.dependencies[] | select(.vulnerabilities[]?.severity == "HIGH") | length // 0' dependency-check-report.json)",
-              "sonarIssues": "$(curl -s -u $SONAR_TOKEN: https://your-sonarqube/api/issues/search?componentKeys=your-project | jq '.issues | length')"
-            }
-          ''')
-        }
-      }
-    }
-    EOF
-
-    # تنفيذ Job DSL
-    java -jar /var/cache/jenkins/war/WEB-INF/jenkins-cli.jar -s http://localhost:8080/ -auth admin:$JENKINS_PASSWORD groovy /tmp/security-scan.groovy
-
-    # 7. فتح الـ ports
-    firewall-cmd --permanent --add-port=8080/tcp
-    firewall-cmd --reload || true
-
-    echo "Jenkins fully configured at http://$(curl -s ifconfig.me):8080" > /var/log/setup-complete.log
-    echo "Admin password: $JENKINS_PASSWORD" >> /var/log/setup-complete.log
-  EOT
+    yum install java-11-openjdk -y
+    yum install jenkins -y
+    systemctl start jenkins && systemctl enable jenkins
+  SCRIPT
 }
+
+# ──────────────────────────────────────────────────────────────
+# Jenkins Role to push to ECR and ECR access
+# ──────────────────────────────────────────────────────────────
+
+module "jenkins_ec2_role" {
+  source = "./modules/iam-role"
+
+  name        = "${var.project_name}-jenkins-ec2-role"
+  description = "IAM role for Jenkins EC2 to push to ECR and Secret Manager access"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+
+  tags = local.tags
+}
+
+module "jenkins_ec2_role_attach" {
+  source    = "./modules/iam-role-policy-attachment"
+  role_name = module.jenkins_ec2_role.name
+  
+  policy_arns = [
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser",  # Full ECR access
+    "arn:aws:iam::aws:policy/AmazonS3FullAccess",  # For build artifacts
+    "arn:aws:iam::aws:policy/SecretsManagerReadWrite" # For Full read/write access to secrets
+  ]
+}
+
 
 module "ec2" {
   source = "./modules/ec2"
@@ -401,12 +293,13 @@ module "ec2" {
   instances = {
     jenkins-server = {
       ami                         = var.ami_id
-      instance_type               = "t3.medium"
+      instance_type               = "m7i-flex.large"
       subnet_id                   = module.eks_network.subnet_ids["public-1b"]
       security_group_ids          = [module.sg.security_group_ids["jenkins-sg"]]
       associate_public_ip_address = true
       user_data                   = local.jenkins_user_data
       root_volume_size            = 30
+      iam_role_name               = module.jenkins_ec2_role.name
       tags                        = { Role = "jenkins-ci" }
     }
   }
@@ -414,7 +307,7 @@ module "ec2" {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# RDS (Single-AZ for free tier, but subnet group spans 2 AZs per AWS requirement)
+# RDS (Single-AZ, but subnet group spans 2 AZs per AWS requirement)
 # ═══════════════════════════════════════════════════════════════════════════════
 module "rds" {
   source = "./modules/rds"
@@ -423,17 +316,20 @@ module "rds" {
   tags   = local.tags
 
   db_instances = {
-    app-db = {
+    "${var.db_instance}"= {
       engine            = "postgres"
       engine_version    = "14.15"
       instance_class    = "db.t3.micro"
       allocated_storage = 20
-      username          = var.db_username
-      password          = var.db_password
-      db_name           = var.db_name
-      port              = 5432
 
-      subnet_ids             = [module.eks_network.subnet_ids["private-db-1a"], module.eks_network.subnet_ids["private-db-1c"]]
+      username = var.db_username
+      db_name  = var.db_name
+      port     = 5432
+
+      subnet_ids             = [
+        module.eks_network.subnet_ids["private-db-1a"],
+        module.eks_network.subnet_ids["private-db-1c"]
+      ]
       vpc_security_group_ids = [module.sg.security_group_ids["rds-sg"]]
 
       multi_az                 = false
@@ -580,7 +476,7 @@ module "eks" {
       enable_irsa         = true
 
       node_groups = {
-        "default" = {
+        "${var.eks_node_group_name}" = {
           subnet_ids     =  [
                             module.eks_network.subnet_ids["private-eks-1a"],
                             module.eks_network.subnet_ids["private-eks-1b"],
@@ -600,6 +496,103 @@ module "eks" {
 }
 
 
+# This data source to get the auto-created EKS node SG
+data "aws_security_group" "eks_node_auto_sg" {
+  depends_on = [module.eks]  # Wait for EKS to create it
+
+  filter {
+    name   = "tag:aws:eks:cluster-name"
+    values = [var.eks_cluster_name]
+  }
+  
+  filter {
+    name   = "tag:kubernetes.io/cluster/${var.eks_cluster_name}"
+    values = ["owned"]
+  }
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Security Group Rules
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "sg-rules" {
+  source = "./modules/security-group-rule"
+  depends_on = [data.aws_security_group.eks_node_auto_sg]
+
+  rules = {
+    # 1. Allow PostgreSQL from EKS nodes to RDS
+    rds_from_eks = {
+      type                     = "ingress"
+      security_group_id        = module.sg.security_group_ids["rds-sg"]
+      source_security_group_id = data.aws_security_group.eks_node_auto_sg.id
+
+      from_port = 5432
+      to_port   = 5432
+      protocol  = "tcp"
+
+      description = "PostgreSQL from EKS nodes only"
+    }
+
+    # 2. SSH access to EKS nodes
+    eks_node_ssh = {
+      type              = "ingress"
+      security_group_id = data.aws_security_group.eks_node_auto_sg.id
+      cidr_blocks       = ["0.0.0.0/0"]
+
+      from_port = 22
+      to_port   = 22
+      protocol  = "tcp"
+
+      description = "SSH from anywhere"
+    }
+
+    # 3. NodePort services for EKS nodes
+    eks_node_nodeport = {
+      type              = "ingress"
+      security_group_id = data.aws_security_group.eks_node_auto_sg.id
+      cidr_blocks       = ["10.0.0.0/16"]  # Your VPC CIDR
+
+      from_port = 1025
+      to_port   = 65535
+      protocol  = "tcp"
+
+      description = "NodePort services within VPC"
+    }
+
+    # 4. HTTPS access to EKS API
+    eks_node_https = {
+      type              = "ingress"
+      security_group_id = data.aws_security_group.eks_node_auto_sg.id
+      cidr_blocks       = ["0.0.0.0/0"]
+
+      from_port = 443
+      to_port   = 443
+      protocol  = "tcp"
+
+      description = "HTTPS to EKS API"
+    }
+
+    # 5. HTTP access to EKS API
+    eks_node_http = {
+      type              = "ingress"
+      security_group_id = data.aws_security_group.eks_node_auto_sg.id
+      cidr_blocks       = ["0.0.0.0/0"]
+
+      from_port = 80
+      to_port   = 80
+      protocol  = "tcp"
+
+      description = "HTTP to EKS API"
+    }
+  }
+}
+
+
+
+
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -610,7 +603,7 @@ module "eks" {
 resource "time_sleep" "wait_for_eks" {
   depends_on = [module.eks] # Wait for creation to START
   
-  create_duration = "180s" # For OIDC to be available, Give it time to be READY
+  create_duration = "90s" # For OIDC to be available, Give it time to be READY
 }
 
 # Fetch cluster info AFTER it's created
@@ -669,44 +662,65 @@ module "eks_namespaces" {
         tool     = "argocd"
       }
       annotations = {
-        "owner" = "platform-team"
+        "owner" = "devops-team"
       }
     }
-    
-    observability = {
-      name = "observability"
+
+    monitoring = {
+      name = "monitoring"
       labels = {
         category = "platform"
         tool     = "monitoring"
       }
       annotations = {
-        "owner" = "sre-team"
+        "owner" = "devops-team"
       }
     }
-    
+
     # Application namespaces
     backend = {
       name = "backend"
       labels = {
         category = "application"
-        team     = "backend-team"
+        framework     = "django fw"
       }
       annotations = {
-        "owner" = "backend-team"
+        "owner" = "devops-team"
       }
     }
-    
+
     frontend = {
       name = "frontend"
       labels = {
         category = "application"
-        team     = "frontend-team"
+        framework     = "react"
       }
       annotations = {
-        "owner" = "frontend-team"
+        "owner" = "devops-team"
       }
     }
-    
+
+    memcached = {
+      name = "memcached"
+      labels = {
+        category = "data"
+        service  = "cache"
+      }
+      annotations = {
+        "owner" = "devops-team"
+      }
+    }
+
+    cert-manager = {
+      name = "cert-manager"
+      labels = {
+        category = "certificates"
+        cert = "cert"
+      }
+      annotations = {
+        "owner" = "devops-team"
+      }
+    }
   }
   
   default_labels = {
@@ -730,43 +744,129 @@ module "eks_irsa" {
   
   service_accounts = {
     backend = {
-      role_name       = "${var.project_name}-${var.environment}-backend-irsa-role"
-      policy_name     = "${var.project_name}-${var.environment}-backend-secrets-policy"
+      role_name       = "${var.project_name}-backend-irsa-role"
+      policy_name     = "${var.project_name}-backend-secrets-policy"
       policy_document = {
         Version = "2012-10-17"
-        Statement = [{
+        Statement = [
+          {
           Effect   = "Allow"
-          Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+          Action   = [
+              "secretsmanager:GetSecretValue", 
+              "secretsmanager:DescribeSecret"
+            ]
           Resource = "*"
-        }]
+          },
+          {
+            Effect   = "Allow"
+            Action   = [
+              "rds-db:connect",  # Allows RDS IAM Database Authentication
+              "rds:DescribeDBInstances",
+              "rds:DescribeDBClusters"
+            ]
+            Resource = "*"
+          }
+        ]
       }
       namespace   = "backend"
       k8s_sa_name = "backend-sa"
     }
 
     alb_controller = {
-      role_name       = "${var.project_name}-${var.environment}-alb-controller-irsa-role"
-      policy_name     = "${var.project_name}-${var.environment}-alb-controller-policy"
+      role_name       = "${var.project_name}-alb-controller-irsa-role"
+      policy_name     = "${var.project_name}-alb-controller-policy"
       policy_document = {
         Version = "2012-10-17"
-        Statement = [{
-          Effect   = "Allow"
-          Action   = [
-            "ec2:Describe*", "elasticloadbalancing:*", "iam:CreateServiceLinkedRole",
-            "iam:GetServerCertificate", "iam:ListServerCertificates",
-            "cognito-idp:DescribeUserPoolClient",
-            "waf-regional:GetWebACL", "waf-regional:GetWebACLForResource",
-            "waf-regional:AssociateWebACL", "waf-regional:DisassociateWebACL",
-            "wafv2:GetWebACL", "wafv2:GetWebACLForResource", "wafv2:AssociateWebACL", "wafv2:DisassociateWebACL",
-            "shield:Get*", "shield:Describe*", "shield:CreateProtection", "shield:DeleteProtection"
-          ]
-          Resource = "*"
-        }]
+        Statement = [
+          {
+            Effect = "Allow"
+            Action = [
+              "iam:CreateServiceLinkedRole",
+              "ec2:DescribeAccountAttributes",
+              "ec2:DescribeAddresses",
+              "ec2:DescribeAvailabilityZones",
+              "ec2:DescribeInternetGateways",
+              "ec2:DescribeVpcs",
+              "ec2:DescribeVpcPeeringConnections",
+              "ec2:DescribeSubnets",
+              "ec2:DescribeSecurityGroups",
+              "ec2:DescribeInstances",
+              "ec2:DescribeNetworkInterfaces",
+              "ec2:DescribeTags",
+              "ec2:DescribeRouteTables",
+              "ec2:GetCoipPoolUsage",
+              "ec2:DescribeCoipPools",
+              "elasticloadbalancing:DescribeLoadBalancers",
+              "elasticloadbalancing:DescribeLoadBalancerAttributes",
+              "elasticloadbalancing:DescribeListeners",
+              "elasticloadbalancing:DescribeListenerCertificates",
+              "elasticloadbalancing:DescribeSSLPolicies",
+              "elasticloadbalancing:DescribeRules",
+              "elasticloadbalancing:DescribeTargetGroups",
+              "elasticloadbalancing:DescribeTargetGroupAttributes",
+              "elasticloadbalancing:DescribeTargetHealth",
+              "elasticloadbalancing:DescribeTags"
+            ]
+            Resource = "*"
+          },
+          {
+            Effect = "Allow"
+            Action = [
+              "ec2:AuthorizeSecurityGroupIngress",
+              "ec2:RevokeSecurityGroupIngress",
+              "ec2:CreateSecurityGroup",
+              "ec2:DeleteSecurityGroup",
+              "ec2:CreateTags",
+              "ec2:DeleteTags",
+              "ec2:ModifyInstanceAttribute",
+              "ec2:ModifyNetworkInterfaceAttribute",
+              "ec2:ModifySecurityGroupRules"
+            ]
+            Resource = "*"
+          },
+          {
+            Effect = "Allow"
+            Action = [
+              "elasticloadbalancing:AddListenerCertificates",
+              "elasticloadbalancing:RemoveListenerCertificates",
+              "elasticloadbalancing:ModifyListener",
+              "elasticloadbalancing:ModifyLoadBalancerAttributes",
+              "elasticloadbalancing:SetIpAddressType",
+              "elasticloadbalancing:SetSecurityGroups",
+              "elasticloadbalancing:SetSubnets",
+              "elasticloadbalancing:DeleteLoadBalancer",
+              "elasticloadbalancing:CreateLoadBalancer",
+              "elasticloadbalancing:CreateListener",
+              "elasticloadbalancing:DeleteListener",
+              "elasticloadbalancing:CreateRule",
+              "elasticloadbalancing:DeleteRule",
+              "elasticloadbalancing:ModifyRule"
+            ]
+            Resource = "*"
+          },
+          {
+            Effect = "Allow"
+            Action = [
+              "elasticloadbalancing:RegisterTargets",
+              "elasticloadbalancing:DeregisterTargets",
+              "elasticloadbalancing:CreateTargetGroup",
+              "elasticloadbalancing:DeleteTargetGroup",
+              "elasticloadbalancing:ModifyTargetGroup",
+              "elasticloadbalancing:ModifyTargetGroupAttributes",
+              "acm:DescribeCertificate",
+              "acm:ListCertificates",
+              "elasticloadbalancing:*",
+              "acm:DescribeCertificate",
+              "acm:ListCertificates"
+            ]
+            Resource = "*"
+          },
+        ]
       }
       namespace   = "kube-system"
       k8s_sa_name = "aws-load-balancer-controller"
     }
-  }
+    }
   
-  tags = local.tags
+    tags = local.tags
 }

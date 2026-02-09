@@ -1,15 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-  }
-}
 
 # Generate TLS private key for each instance
 resource "tls_private_key" "this" {
@@ -31,6 +19,27 @@ resource "aws_key_pair" "this" {
     each.value.tags,
     {
       Name = "${each.key}-key"
+    }
+  )
+}
+
+# Create IAM instance profiles for instances that specify iam_role_name
+resource "aws_iam_instance_profile" "this" {
+  for_each = {
+    for k, v in var.instances : k => v
+    if var.create_instance_profiles && try(v.iam_role_name, null) != null
+  }
+
+  name = "${each.key}-instance-profile"
+  role = each.value.iam_role_name
+  
+  tags = merge(
+    var.tags,
+    each.value.tags,
+    {
+      Name        = "${each.key}-instance-profile"
+      Instance    = each.key
+      ManagedBy   = "ec2-module"
     }
   )
 }
@@ -58,7 +67,9 @@ resource "aws_instance" "this" {
   }
 
   # IAM instance profile
-  iam_instance_profile = lookup(each.value, "iam_instance_profile", null)
+  iam_instance_profile = (
+    var.create_instance_profiles && try(each.value.iam_role_name, null) != null
+  ) ? aws_iam_instance_profile.this[each.key].name : lookup(each.value, "iam_instance_profile", null)
 
   # Monitoring
   monitoring = lookup(each.value, "enable_detailed_monitoring", false)

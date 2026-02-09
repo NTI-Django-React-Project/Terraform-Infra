@@ -58,3 +58,10 @@ output "db_instances" {
   value       = aws_db_instance.this
   sensitive   = true
 }
+
+output "master_user_secrets" {
+  value = {
+    for k, db in aws_db_instance.this :
+    k => db.master_user_secret[0].secret_arn
+  }
+}
