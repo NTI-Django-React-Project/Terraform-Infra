@@ -765,53 +765,6 @@ terraform destroy
 
 ---
 
-## CI/CD Integration
-
-### Jenkins Pipeline Example
-
-```groovy
-pipeline {
-    agent any
-    
-    environment {
-        AWS_REGION = 'eu-north-1'
-        ECR_REGISTRY = '<account-id>.dkr.ecr.eu-north-1.amazonaws.com'
-        IMAGE_NAME = 'gig-router-backend'
-    }
-    
-    stages {
-        stage('Build') {
-            steps {
-                sh 'docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} .'
-            }
-        }
-        
-        stage('Push to ECR') {
-            steps {
-                sh '''
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                    
-                    docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${ECR_REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}
-                    docker push ${ECR_REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}
-                '''
-            }
-        }
-        
-        stage('Deploy to EKS') {
-            steps {
-                sh '''
-                    aws eks update-kubeconfig --name gig-router-eks-cluster --region ${AWS_REGION}
-                    kubectl set image deployment/backend backend=${ECR_REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER} -n backend
-                '''
-            }
-        }
-    }
-}
-```
-
----
-
 ## Cost Estimation
 
 ### Monthly Cost Breakdown (Approximate)
@@ -831,59 +784,14 @@ pipeline {
 
 ---
 
-## Maintenance
-
-### Regular Tasks
-
-- **Weekly**: Review CloudWatch logs and metrics
-- **Monthly**: Update Kubernetes version (EKS)
-- **Quarterly**: Review and rotate IAM credentials
-- **As Needed**: Update Terraform provider versions
-
-### Upgrade Path
-
-```bash
-# Upgrade EKS cluster version
-# 1. Update variable
-eks_kubernetes_version = "1.29"
-
-# 2. Apply changes
-terraform apply
-
-# 3. Update node group (may require recreation)
-# Terraform will handle this automatically
-```
-
----
-
-## Contributing
-
-This infrastructure is maintained by the DevOps team. For changes:
-
-1. Create a feature branch
-2. Make changes and test in dev environment
-3. Submit pull request with detailed description
-4. Obtain approval from team lead
-5. Apply to staging, then production
-
----
-
 ## License
 
-This project is proprietary to the Gig Router organization.
+This project is maintained for educational purposes as part of the NTI DevOps training program.
 
 ---
 
-## Support
 
-For issues or questions:
-- **DevOps Team**: devops@gigrouter.com
-- **Documentation**: [Internal Wiki](https://wiki.gigrouter.com)
-- **Incident Response**: [On-Call Rotation](https://oncall.gigrouter.com)
-
----
-
-**Last Updated**: 2026-02-11  
-**Maintained By**: DevOps Engineering Team  
+**Last Updated**: 2026-02-10  
+**Maintained By**: Abdelaziz Ak  
 **Terraform Version**: 1.5+  
 **AWS Region**: eu-north-1
