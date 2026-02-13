@@ -752,7 +752,7 @@ module "eks_irsa" {
       }
       namespace   = "backend"
       k8s_sa_name = "backend-sa"
-    }
+    },
 
     alb_controller = {
       role_name       = "${var.project_name}-alb-controller-irsa-role"
@@ -847,8 +847,37 @@ module "eks_irsa" {
       }
       namespace   = "kube-system"
       k8s_sa_name = "aws-load-balancer-controller"
+    },
+
+    monitoring = {
+      role_name       = "${var.project_name}-monitoring-irsa-role"
+      policy_name     = "${var.project_name}-monitoring-s3-policy"
+      policy_document = {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:ListBucket",
+              "s3:GetBucketLocation"
+            ],
+            "Resource": "arn:aws:s3:::elasticsearch-logs-backup"
+          },
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:PutObject",
+              "s3:GetObject",
+              "s3:DeleteObject"
+            ],
+            "Resource": "arn:aws:s3:::elasticsearch-logs-backup/*"
+          }
+        ]
+      }
+      namespace   = "monitoring"
+      k8s_sa_name = "monitoring-sa"
     }
-    }
+  }
   
     tags = local.tags
 }
